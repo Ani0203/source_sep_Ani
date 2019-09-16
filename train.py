@@ -21,7 +21,7 @@ tqdm.monitor_interval = 0
 def train(args, unmix, device, train_sampler, optimizer):
     losses = utils.AverageMeter()
     unmix.train()
-    pbar = tqdm.tqdm(train_sampler, disable=args.quiet)
+    pbar = tqdm.tqdm(train_sampler, disable=args.quiet) 
     for x, y in pbar:
         pbar.set_description("Training batch")
         x, y = x.to(device), y.to(device)
