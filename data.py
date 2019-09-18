@@ -44,19 +44,20 @@ def load_datasets(parser, args):
         train_dataset, validation_dataset
     """
     if args.dataset == 'aligned':
-        parser.add_argument('--input-file', type=str)
-        parser.add_argument('--output-file', type=str)
-
+        parser.add_argument('--input-file', type=str , default='mixture.wav')
+        parser.add_argument('--output-file', type=str, default='vocals.wav' )
         args = parser.parse_args()
+        args.output_file = args.target + '.wav'
+        #print("HELLOO", args.output_file)
         # set output target to basename of output file
         args.target = Path(args.output_file).stem
-
         dataset_kwargs = {
             'root': Path(args.root),
             'seq_duration': args.seq_dur,
             'input_file': args.input_file,
             'output_file': args.output_file
         }
+        #args.output_file = Path(args.target + '.wav')
         args.target = Path(args.output_file).stem
         train_dataset = AlignedDataset(
             split='train',
@@ -189,7 +190,7 @@ def load_datasets(parser, args):
         )
 
     elif args.dataset == 'musdb':
-        parser.add_argument('--is-wav', action='store_true', default=False,
+        parser.add_argument('--is_wav', action='store_true', default=True,
                             help='loads wav instead of STEMS')
         parser.add_argument('--samples-per-track', type=int, default=64)
         parser.add_argument(
@@ -237,7 +238,7 @@ class AlignedDataset(torch.utils.data.Dataset):
         output_file='vocals.wav',
         seq_duration=None,
         random_chunks=False,
-        sample_rate=44100
+        sample_rate=22050 #changed sampling rate
     ):
         """A dataset of that assumes multiple track folders
         where each track includes and input and an output file
@@ -644,7 +645,7 @@ class MUSDBDataset(torch.utils.data.Dataset):
         target='vocals',
         root=None,
         download=False,
-        is_wav=False,
+        is_wav=True,
         subsets='train',
         split='train',
         seq_duration=6.0,

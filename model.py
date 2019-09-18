@@ -91,8 +91,8 @@ class OpenUnmix(nn.Module):
         n_hop=1024,
         input_is_spectrogram=False,
         hidden_size=512,
-        nb_channels=2,
-        sample_rate=44100,
+        nb_channels=1, #changed from stereo to mono
+        sample_rate=22050,  #changed sampling rate
         nb_layers=3,
         input_mean=None,
         input_scale=None,
@@ -125,7 +125,7 @@ class OpenUnmix(nn.Module):
             self.transform = NoOp()
         else:
             self.transform = nn.Sequential(self.stft, self.spec)
-
+        
         self.fc1 = Linear(
             self.nb_bins*nb_channels, hidden_size,
             bias=False

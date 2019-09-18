@@ -84,14 +84,14 @@ def main():
                         help='target source (will be passed to the dataset)')
 
     # Dataset paramaters
-    parser.add_argument('--dataset', type=str, default="musdb",
+    parser.add_argument('--dataset', type=str, default="aligned",
                         choices=[
                             'musdb', 'aligned', 'sourcefolder',
                             'trackfolder_var', 'trackfolder_fix'
                         ],
                         help='Name of the dataset.')
-    parser.add_argument('--root', type=str, help='root path of dataset')
-    parser.add_argument('--output', type=str, default="open-unmix",
+    parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data/')
+    parser.add_argument('--output', type=str, default="../out_unmix/",
                         help='provide output path base folder name')
     parser.add_argument('--model', type=str, help='Path to checkpoint folder')
 
@@ -125,7 +125,7 @@ def main():
                         help='hidden size parameter of dense bottleneck layers')
     parser.add_argument('--bandwidth', type=int, default=16000,
                         help='maximum model bandwidth in herz')
-    parser.add_argument('--nb-channels', type=int, default=2,
+    parser.add_argument('--nb-channels', type=int, default=1,
                         help='set number of channels for model (1, 2)')
     parser.add_argument('--nb-workers', type=int, default=0,
                         help='Number of workers for dataloader.')
@@ -154,6 +154,8 @@ def main():
     device = torch.device("cuda" if use_cuda else "cpu")
 
     train_dataset, valid_dataset, args = data.load_datasets(parser, args)
+    print("TRAIN DATASET", train_dataset)
+    print("VALID DATASET", valid_dataset)
 
     # create output dir if not exist
     target_path = Path(args.output)
