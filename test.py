@@ -142,6 +142,7 @@ def separate(
             model_name=model_name,
             device=device
         )
+        print("CHECK", unmix_target)
         Vj = unmix_target(audio_torch).cpu().detach().numpy()
         if softmask:
             # only exponentiate the model if we use softmask
@@ -230,16 +231,18 @@ if __name__ == '__main__':
     )
 
     parser.add_argument(
-        'input',
+        '--input',
         type=str,
         nargs='+',
-        help='List of paths to wav/flac files.'
+        help='List of paths to wav/flac files.',
+        default = ['../rec_data/train/Durga-SakhiMori_plus_comp4_t/mixture.wav']
     )
 
     parser.add_argument(
         '--targets',
         nargs='+',
-        default=['vocals', 'drums', 'bass', 'other'],
+        #default=['vocals', 'drums', 'bass', 'other'],
+        default = ['vocals'] ,
         type=str,
         help='provide targets to be processed. \
               If none, all available targets will be computed'
@@ -248,14 +251,16 @@ if __name__ == '__main__':
     parser.add_argument(
         '--outdir',
         type=str,
-        help='Results path where audio evaluation results are stored'
+        help='Results path where audio evaluation results are stored',
+        default = '../test_out'
     )
 
     parser.add_argument(
         '--model',
-        default='umxhq',
+        #default='umxhq',
         type=str,
-        help='path to mode base directory of pretrained models'
+        help='path to mode base directory of pretrained models',
+        default = '../out_unmix/'
     )
 
     parser.add_argument(

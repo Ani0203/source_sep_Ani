@@ -48,7 +48,8 @@ if __name__ == '__main__':
     parser.add_argument(
         '--targets',
         nargs='+',
-        default=['vocals', 'drums', 'bass', 'other'],
+        #default=['vocals', 'drums', 'bass', 'other'],
+        default=['vocals'],
         type=str,
         help='provide targets to be processed. \
               If none, all available targets will be computed'
@@ -56,25 +57,29 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--model',
-        default='umxhq',
+        #default='umxhq',
         type=str,
-        help='path to mode base directory of pretrained models'
+        help='path to mode base directory of pretrained models',
+        default = '../out_unmix/'
     )
 
     parser.add_argument(
         '--outdir',
+        default='../out_dir_estimates/Exp1_umxhq',
         type=str,
         help='Results path where audio evaluation results are stored'
     )
 
     parser.add_argument(
         '--evaldir',
+        default = '../out_dir_evals/Exp1_umxhq',
         type=str,
         help='Results path for museval estimates'
     )
 
     parser.add_argument(
         '--root',
+        default = '../rec_data/',
         type=str,
         help='Path to MUSDB18'
     )
@@ -82,7 +87,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--subset',
         type=str,
-        default='test',
+        default='valid',
         help='MUSDB subset (`train`/`test`)'
     )
 
@@ -101,7 +106,7 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--is-wav',
-        action='store_true', default=False,
+        action='store_true', default=True,
         help='flags wav version of the dataset'
     )
 
@@ -117,46 +122,48 @@ if __name__ == '__main__':
         subsets=args.subset,
         is_wav=args.is_wav
     )
-    if args.cores > 1:
-        pool = multiprocessing.Pool(args.cores)
-        results = museval.EvalStore()
-        scores_list = list(
-            pool.imap_unordered(
-                func=functools.partial(
-                    separate_and_evaluate,
-                    targets=args.targets,
-                    model_name=args.model,
-                    niter=args.niter,
-                    alpha=args.alpha,
-                    softmask=args.softmask,
-                    output_dir=args.outdir,
-                    eval_dir=args.evaldir,
-                    device=device
-                ),
-                iterable=mus.tracks,
-                chunksize=1
-            )
+# =============================================================================
+#     if args.cores > 1:
+#         pool = multiprocessing.Pool(args.cores)
+#         results = museval.EvalStore()
+#         scores_list = list(
+#             pool.imap_unordered(
+#                 func=functools.partial(
+#                     separate_and_evaluate,
+#                     targets=args.targets,
+#                     model_name=args.model,
+#                     niter=args.niter,
+#                     alpha=args.alpha,
+#                     softmask=args.softmask,
+#                     output_dir=args.outdir,
+#                     eval_dir=args.evaldir,
+#                     device=device
+#                 ),
+#                 iterable=mus.tracks,
+#                 chunksize=1
+#             )
+#         )
+#         pool.close()
+#         pool.join()
+#         for scores in scores_list:
+#             results.add_track(scores)
+# 
+#     else:
+# =============================================================================
+    results = museval.EvalStore()
+    for track in tqdm.tqdm(mus.tracks):
+        scores = separate_and_evaluate(
+            track,
+            targets=args.targets,
+            model_name=args.model,
+            niter=args.niter,
+            alpha=args.alpha,
+            softmask=args.softmask,
+            output_dir=args.outdir,
+            eval_dir=args.evaldir,
+            device=device
         )
-        pool.close()
-        pool.join()
-        for scores in scores_list:
-            results.add_track(scores)
-
-    else:
-        results = museval.EvalStore()
-        for track in tqdm.tqdm(mus.tracks):
-            scores = separate_and_evaluate(
-                track,
-                targets=args.targets,
-                model_name=args.model,
-                niter=args.niter,
-                alpha=args.alpha,
-                softmask=args.softmask,
-                output_dir=args.outdir,
-                eval_dir=args.evaldir,
-                device=device
-            )
-            results.add_track(scores)
+        results.add_track(scores)
 
     print(results)
     method = museval.MethodStore()

@@ -59,7 +59,7 @@ class Spectrogram(nn.Module):
     def __init__(
         self,
         power=1,
-        mono=True
+        mono=False
     ):
         super(Spectrogram, self).__init__()
         self.power = power
@@ -91,7 +91,7 @@ class OpenUnmix(nn.Module):
         n_hop=1024,
         input_is_spectrogram=False,
         hidden_size=512,
-        nb_channels=1, #changed from stereo to mono
+        nb_channels=2, #changed from stereo to mono
         sample_rate=22050,  #changed sampling rate
         nb_layers=3,
         input_mean=None,
@@ -206,6 +206,7 @@ class OpenUnmix(nn.Module):
         # to (nb_frames*nb_samples, nb_channels*nb_bins)
         # and encode to (nb_frames*nb_samples, hidden_size)
         x = self.fc1(x.reshape(-1, nb_channels*self.nb_bins))
+        #x = self.fc1(x.reshape(-1, self.nb_bins))
         # normalize every instance in a batch
         x = self.bn1(x)
         x = x.reshape(nb_frames, nb_samples, self.hidden_size)

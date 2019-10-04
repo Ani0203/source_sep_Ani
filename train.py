@@ -53,7 +53,7 @@ def get_statistics(args, dataset):
 
     spec = torch.nn.Sequential(
         model.STFT(n_fft=args.nfft, n_hop=args.nhop),
-        model.Spectrogram(mono=True)
+        model.Spectrogram(mono=False)
     )
 
     dataset_scaler = copy.deepcopy(dataset)
@@ -66,7 +66,9 @@ def get_statistics(args, dataset):
         x, y = dataset_scaler[ind]
         pbar.set_description("Compute dataset statistics")
         X = spec(x[None, ...])
-        scaler.partial_fit(np.squeeze(X))
+        #print("HELLO", np.squeeze(X).shape)
+        p = np.squeeze(X)
+        scaler.partial_fit(np.concatenate((p[:,0],p[:,1]) )) #CHANGED!!
 
     # set inital input scaler values
     std = np.maximum(
@@ -93,18 +95,20 @@ def main():
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data/')
     parser.add_argument('--output', type=str, default="../out_unmix/",
                         help='provide output path base folder name')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/')
     parser.add_argument('--model', type=str, help='Path to checkpoint folder')
 
+    
     # Trainig Parameters
     parser.add_argument('--epochs', type=int, default=1000)
     parser.add_argument('--batch-size', type=int, default=16)
-    parser.add_argument('--lr', type=float, default=0.001,
+    parser.add_argument('--lr', type=float, default=0.01,
                         help='learning rate, defaults to 1e-3')
     parser.add_argument('--patience', type=int, default=140,
                         help='maximum number of epochs to train (default: 140)')
     parser.add_argument('--lr-decay-patience', type=int, default=80,
                         help='lr decay patience for plateau scheduler')
-    parser.add_argument('--lr-decay-gamma', type=float, default=0.3,
+    parser.add_argument('--lr-decay-gamma', type=float, default=0.999,
                         help='gamma of learning rate scheduler decay')
     parser.add_argument('--weight-decay', type=float, default=0.00001,
                         help='weight decay')
@@ -125,9 +129,9 @@ def main():
                         help='hidden size parameter of dense bottleneck layers')
     parser.add_argument('--bandwidth', type=int, default=16000,
                         help='maximum model bandwidth in herz')
-    parser.add_argument('--nb-channels', type=int, default=1,
+    parser.add_argument('--nb-channels', type=int, default=2,
                         help='set number of channels for model (1, 2)')
-    parser.add_argument('--nb-workers', type=int, default=0,
+    parser.add_argument('--nb-workers', type=int, default=8,
                         help='Number of workers for dataloader.')
 
     # Misc Parameters
@@ -251,6 +255,28 @@ def main():
         )
 
         stop = es.step(valid_loss)
+        
+        from matplotlib import pyplot as plt 
+        
+        plt.figure(figsize=(16,12))
+        plt.subplot(2, 2, 1)
+        plt.title("Training loss")
+        plt.plot(train_losses,label="Training")
+        plt.xlabel("Iterations")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.show()
+        
+        plt.figure(figsize=(16,12))
+        plt.subplot(2, 2, 2)
+        plt.title("Validation loss")
+        plt.plot(valid_losses,label="Validation")
+        plt.xlabel("Iterations")
+        plt.ylabel("Loss")
+        plt.legend()
+        plt.show()
+        
+        
 
         if valid_loss == es.best:
             best_epoch = epoch
@@ -285,9 +311,11 @@ def main():
 
         train_times.append(time.time() - end)
 
-        if stop:
-            print("Apply Early Stopping")
-            break
+# =============================================================================
+#         if stop:
+#             print("Apply Early Stopping")
+#             break
+# =============================================================================
 
 
 if __name__ == "__main__":

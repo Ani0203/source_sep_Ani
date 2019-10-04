@@ -274,14 +274,16 @@ class AlignedDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         input_path, output_path = self.tuple_paths[index]
-
-        if self.random_chunks:
-            input_info = load_info(input_path)
-            output_info = load_info(output_path)
-            duration = min(input_info['duration'], output_info['duration'])
-            start = random.uniform(0, duration - self.seq_duration)
-        else:
-            start = 0
+# =============================================================================
+# 
+#         if self.random_chunks:
+#             input_info = load_info(input_path)
+#             output_info = load_info(output_path)
+#             duration = min(input_info['duration'], output_info['duration'])
+#             start = random.uniform(0, duration - self.seq_duration)
+#         else:
+# =============================================================================
+        start = 0
 
         X_audio = load_audio(input_path, start=start, dur=self.seq_duration)
         Y_audio = load_audio(output_path, start=start, dur=self.seq_duration)
