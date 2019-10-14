@@ -12,6 +12,7 @@ import numpy as np
 import random
 from git import Repo
 import os
+os.environ["CUDA_VISIBLE_DEVICES"]="1"
 import copy
 
 
@@ -59,8 +60,9 @@ def get_statistics(args, dataset):
     dataset_scaler = copy.deepcopy(dataset)
     dataset_scaler.samples_per_track = 1
     dataset_scaler.augmentations = None
-    dataset_scaler.random_chunks = False
-    dataset_scaler.seq_duration = None
+    dataset_scaler.random_chunks = True
+    #dataset_scaler.seq_duration = args.seq_dur
+    dataset_scaler.seq_duration = 0.0
     pbar = tqdm.tqdm(range(len(dataset_scaler)), disable=args.quiet)
     for ind in pbar:
         x, y = dataset_scaler[ind]
@@ -93,22 +95,22 @@ def main():
                         ],
                         help='Name of the dataset.')
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data/')
-    parser.add_argument('--output', type=str, default="../out_unmix/",
+    parser.add_argument('--output', type=str, default="../out_unmix/model7",
                         help='provide output path base folder name')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/')
-    parser.add_argument('--model', type=str, help='Path to checkpoint folder')
+    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model7')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder')
 
     
     # Trainig Parameters
     parser.add_argument('--epochs', type=int, default=1000)
-    parser.add_argument('--batch-size', type=int, default=16)
-    parser.add_argument('--lr', type=float, default=0.01,
+    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--lr', type=float, default=0.0001,
                         help='learning rate, defaults to 1e-3')
     parser.add_argument('--patience', type=int, default=140,
                         help='maximum number of epochs to train (default: 140)')
     parser.add_argument('--lr-decay-patience', type=int, default=80,
                         help='lr decay patience for plateau scheduler')
-    parser.add_argument('--lr-decay-gamma', type=float, default=0.999,
+    parser.add_argument('--lr-decay-gamma', type=float, default=0.3,
                         help='gamma of learning rate scheduler decay')
     parser.add_argument('--weight-decay', type=float, default=0.00001,
                         help='weight decay')
@@ -131,7 +133,7 @@ def main():
                         help='maximum model bandwidth in herz')
     parser.add_argument('--nb-channels', type=int, default=2,
                         help='set number of channels for model (1, 2)')
-    parser.add_argument('--nb-workers', type=int, default=8,
+    parser.add_argument('--nb-workers', type=int, default=4,
                         help='Number of workers for dataloader.')
 
     # Misc Parameters
@@ -265,7 +267,8 @@ def main():
         plt.xlabel("Iterations")
         plt.ylabel("Loss")
         plt.legend()
-        plt.show()
+        #plt.show()
+        plt.savefig(Path(target_path, "train_plot.pdf"))
         
         plt.figure(figsize=(16,12))
         plt.subplot(2, 2, 2)
@@ -274,7 +277,8 @@ def main():
         plt.xlabel("Iterations")
         plt.ylabel("Loss")
         plt.legend()
-        plt.show()
+        #plt.show()
+        plt.savefig(Path(target_path, "val_plot.pdf"))
         
         
 
@@ -311,12 +315,30 @@ def main():
 
         train_times.append(time.time() - end)
 
+        if stop:
+            print("Apply Early Stopping")
+            break
+    
 # =============================================================================
-#         if stop:
-#             print("Apply Early Stopping")
-#             break
+#     plt.figure(figsize=(16,12))
+#     plt.subplot(2, 2, 1)
+#     plt.title("Training loss")
+#     plt.plot(train_losses,label="Training")
+#     plt.xlabel("Iterations")
+#     plt.ylabel("Loss")
+#     plt.legend()
+#     plt.show()
+#     
+#     plt.figure(figsize=(16,12))
+#     plt.subplot(2, 2, 2)
+#     plt.title("Validation loss")
+#     plt.plot(valid_losses,label="Validation")
+#     plt.xlabel("Iterations")
+#     plt.ylabel("Loss")
+#     plt.legend()
+#     #plt.show()
+#     plt.savefig(Path(target_path, "train_val_plot.pdf"))
+# 
 # =============================================================================
-
-
 if __name__ == "__main__":
     main()

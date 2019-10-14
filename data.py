@@ -237,7 +237,7 @@ class AlignedDataset(torch.utils.data.Dataset):
         input_file='mixture.wav',
         output_file='vocals.wav',
         seq_duration=None,
-        random_chunks=False,
+        random_chunks=True,
         sample_rate=22050 #changed sampling rate
     ):
         """A dataset of that assumes multiple track folders
@@ -274,19 +274,25 @@ class AlignedDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         input_path, output_path = self.tuple_paths[index]
-# =============================================================================
-# 
-#         if self.random_chunks:
-#             input_info = load_info(input_path)
-#             output_info = load_info(output_path)
-#             duration = min(input_info['duration'], output_info['duration'])
-#             start = random.uniform(0, duration - self.seq_duration)
-#         else:
-# =============================================================================
-        start = 0
-
-        X_audio = load_audio(input_path, start=start, dur=self.seq_duration)
-        Y_audio = load_audio(output_path, start=start, dur=self.seq_duration)
+        
+        if (self.seq_duration!=0.0):    
+            if self.random_chunks:
+                 input_info = load_info(input_path)
+                 output_info = load_info(output_path)
+                 duration = min(input_info['duration'], output_info['duration'])
+                 start = random.uniform(0, duration - self.seq_duration)
+            else:
+                start = 0
+            #print("DATA", start)
+            X_audio = load_audio(input_path, start=start, dur=self.seq_duration)
+            Y_audio = load_audio(output_path, start=start, dur=self.seq_duration)
+        else:
+            input_info = load_info(input_path)
+            output_info = load_info(output_path)
+            start=0
+            duration=min(input_info['duration'], output_info['duration'])
+            X_audio = load_audio(input_path, start=start, dur=duration)
+            Y_audio = load_audio(output_path, start=start, dur=duration)
         # return torch tensors
         return X_audio, Y_audio
 

@@ -235,7 +235,10 @@ if __name__ == '__main__':
         type=str,
         nargs='+',
         help='List of paths to wav/flac files.',
-        default = ['../rec_data/train/Durga-SakhiMori_plus_comp4_t/mixture.wav']
+        #default = ['../rec_data/test/Yaman_res_plus_comp50_t/mixture.wav']
+        #default=['../test_out/Exp_1/musdb_eg1/mixture.wav']
+        default = ['../rec_data/train/Durga-SakhiMori_plus_comp28_t/mixture.wav']
+        
     )
 
     parser.add_argument(
@@ -252,15 +255,15 @@ if __name__ == '__main__':
         '--outdir',
         type=str,
         help='Results path where audio evaluation results are stored',
-        default = '../test_out'
+        default = '../test_out/'
     )
 
     parser.add_argument(
         '--model',
         #default='umxhq',
         type=str,
-        help='path to mode base directory of pretrained models',
-        default = '../out_unmix/'
+        #help='path to mode base directory of pretrained models',
+        default = '../out_unmix/model8'
     )
 
     parser.add_argument(
