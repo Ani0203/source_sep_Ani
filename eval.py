@@ -57,10 +57,10 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--model',
-        default='umxhq',
+        #default='umxhq',
         type=str,
         help='path to mode base directory of pretrained models',
-        #default = '../out_unmix/'
+        default = '../out_unmix/'
     )
 
     parser.add_argument(
@@ -87,7 +87,7 @@ if __name__ == '__main__':
     parser.add_argument(
         '--subset',
         type=str,
-        default='valid',
+        default='test',
         help='MUSDB subset (`train`/`test`)'
     )
 

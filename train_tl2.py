@@ -95,10 +95,10 @@ def main():
                         ],
                         help='Name of the dataset.')
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_new/')
-    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug2",
+    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug",
                         help='provide output path base folder name')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug2')
-    parser.add_argument('--model', type=str, help='Path to checkpoint folder')
+    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_umxhq')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
     
     
@@ -219,11 +219,31 @@ def main():
         with open(Path(model_path, args.target + '.json'), 'r') as stream:
             results = json.load(stream)
 
-        target_model_path = Path(model_path, args.target + ".chkpnt")
+        target_model_path = Path(model_path, args.target + ".pth")
+        
+        
         checkpoint = torch.load(target_model_path, map_location=device)
-        unmix.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        scheduler.load_state_dict(checkpoint['scheduler'])
+        
+        #unmix.load_state_dict(checkpoint['state_dict'])
+        unmix.load_state_dict(checkpoint)
+        
+        optimizer = torch.optim.Adam(
+            unmix.parameters(),
+            lr=args.lr,
+            weight_decay=args.weight_decay
+        )
+
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            factor=args.lr_decay_gamma,
+            patience=args.lr_decay_patience,
+            cooldown=10
+        )
+        
+        #optimizer.load_state_dict(checkpoint['optimizer'])
+        #scheduler.load_state_dict(checkpoint['scheduler'])
+        
+        
         # train for another epochs_trained
         t = tqdm.trange(
             results['epochs_trained'],
@@ -268,7 +288,7 @@ def main():
         plt.xlabel("Iterations")
         plt.ylabel("Loss")
         plt.legend()
-        #plt.show()
+        plt.show()
         #plt.savefig(Path(target_path, "train_plot.pdf"))
         
         plt.figure(figsize=(16,12))
@@ -278,7 +298,7 @@ def main():
         plt.xlabel("Iterations")
         plt.ylabel("Loss")
         plt.legend()
-        #plt.show()
+        plt.show()
         #plt.savefig(Path(target_path, "val_plot.pdf"))
         
         
@@ -320,24 +340,26 @@ def main():
             print("Apply Early Stopping")
             break
     
-    plt.figure(figsize=(16,12))
-    plt.subplot(2, 2, 1)
-    plt.title("Training loss")
-    plt.plot(train_losses,label="Training")
-    plt.xlabel("Iterations")
-    plt.ylabel("Loss")
-    plt.legend()
-    #plt.show()
-    
-    plt.figure(figsize=(16,12))
-    plt.subplot(2, 2, 2)
-    plt.title("Validation loss")
-    plt.plot(valid_losses,label="Validation")
-    plt.xlabel("Iterations")
-    plt.ylabel("Loss")
-    plt.legend()
-    #plt.show()
-    plt.savefig(Path(target_path, "train_val_plot.pdf"))
-
+# =============================================================================
+#     plt.figure(figsize=(16,12))
+#     plt.subplot(2, 2, 1)
+#     plt.title("Training loss")
+#     plt.plot(train_losses,label="Training")
+#     plt.xlabel("Iterations")
+#     plt.ylabel("Loss")
+#     plt.legend()
+#     plt.show()
+#     
+#     plt.figure(figsize=(16,12))
+#     plt.subplot(2, 2, 2)
+#     plt.title("Validation loss")
+#     plt.plot(valid_losses,label="Validation")
+#     plt.xlabel("Iterations")
+#     plt.ylabel("Loss")
+#     plt.legend()
+#     #plt.show()
+#     plt.savefig(Path(target_path, "train_val_plot.pdf"))
+# 
+# =============================================================================
 if __name__ == "__main__":
     main()

@@ -29,7 +29,20 @@ def train(args, unmix, device, train_sampler, optimizer):
         optimizer.zero_grad()
         Y_hat = unmix(x)
         Y = unmix.transform(y)
-        loss = torch.nn.functional.mse_loss(Y_hat, Y)
+
+# =============================================================================
+#         if (args.freq1 & args.freq2):
+# =============================================================================
+        loss = torch.nn.functional.mse_loss(Y_hat[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))], Y[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))])
+        print("BW LOSS ACCOUNTED", Y_hat[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))].shape )
+# =============================================================================
+#         else:
+# =============================================================================
+#         loss = torch.nn.functional.mse_loss(Y_hat, Y)
+#         print("BW LOSS NOT ACCOUNTED", Y_hat.shape, Y.shape)
+# =============================================================================
+# =============================================================================
+        
         loss.backward()
         optimizer.step()
         losses.update(loss.item(), Y.size(1))
@@ -44,7 +57,12 @@ def valid(args, unmix, device, valid_sampler):
             x, y = x.to(device), y.to(device)
             Y_hat = unmix(x)
             Y = unmix.transform(y)
-            loss = torch.nn.functional.mse_loss(Y_hat, Y)
+            
+            
+            loss = torch.nn.functional.mse_loss(Y_hat[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))], Y[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))])
+            
+            
+            
             losses.update(loss.item(), Y.size(1))
         return losses.avg
 
@@ -97,8 +115,8 @@ def main():
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_new/')
     parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug2",
                         help='provide output path base folder name')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug2')
-    parser.add_argument('--model', type=str, help='Path to checkpoint folder')
+    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug2')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
     
     
@@ -136,6 +154,10 @@ def main():
                         help='set number of channels for model (1, 2)')
     parser.add_argument('--nb-workers', type=int, default=4,
                         help='Number of workers for dataloader.')
+    parser.add_argument('--freq1', type=int, default=0,
+                        help='Lower limit of frequency band for training loss')
+    parser.add_argument('--freq2', type=int, default=300,
+                        help='Upper limit of frequency band for training loss')
 
     # Misc Parameters
     parser.add_argument('--quiet', action='store_true', default=False,
@@ -146,6 +168,7 @@ def main():
     args, _ = parser.parse_known_args()
 
     use_cuda = not args.no_cuda and torch.cuda.is_available()
+    
     print("Using GPU:", use_cuda)
     print("Using Torchaudio: ", utils._torchaudio_available())
     dataloader_kwargs = {'num_workers': args.nb_workers, 'pin_memory': True} if use_cuda else {}

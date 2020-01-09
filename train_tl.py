@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Dec 16 15:20:08 2019
+
+@author: aniruddha
+"""
+
 import argparse
 import model
 import data
@@ -11,7 +19,10 @@ import sklearn.preprocessing
 import numpy as np
 import random
 from git import Repo
+from contextlib import redirect_stderr
 import os
+import io
+
 os.environ["CUDA_VISIBLE_DEVICES"]="1"
 import copy
 
@@ -95,11 +106,11 @@ def main():
                         ],
                         help='Name of the dataset.')
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_new/')
-    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug2",
+    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug_tl",
                         help='provide output path base folder name')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug2')
-    parser.add_argument('--model', type=str, help='Path to checkpoint folder')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder')
+    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
     
     
     # Trainig Parameters
@@ -113,7 +124,7 @@ def main():
                         help='lr decay patience for plateau scheduler')
     parser.add_argument('--lr-decay-gamma', type=float, default=0.3,
                         help='gamma of learning rate scheduler decay')
-    parser.add_argument('--weight-decay', type=float, default=0.00001,
+    parser.add_argument('--weight-decay', type=float, default=0.0000000001,
                         help='weight decay')
     parser.add_argument('--seed', type=int, default=42, metavar='S',
                         help='random seed (default: 42)')
@@ -177,11 +188,14 @@ def main():
         **dataloader_kwargs
     )
 
-    if args.model:
-        scaler_mean = None
-        scaler_std = None
-    else:
-        scaler_mean, scaler_std = get_statistics(args, train_dataset)
+# =============================================================================
+#     if args.model:
+#         scaler_mean = None
+#         scaler_std = None
+#     
+#     else:
+# =============================================================================
+    scaler_mean, scaler_std = get_statistics(args, train_dataset)
 
     max_bin = utils.bandwidth_to_max_bin(
         train_dataset.sample_rate, args.nfft, args.bandwidth
@@ -215,34 +229,46 @@ def main():
 
     # if a model is specified: resume training
     if args.model:
-        model_path = Path(args.model).expanduser()
-        with open(Path(model_path, args.target + '.json'), 'r') as stream:
-            results = json.load(stream)
+        # disable progress bar
+        err = io.StringIO()
+        with redirect_stderr(err):
+            unmix = torch.hub.load(
+                'sigsep/open-unmix-pytorch',
+                'umxhq',
+                target=args.target,
+                device=device,
+                pretrained=True
+            )
+# =============================================================================
+#         model_path = Path(args.model).expanduser()
+#         with open(Path(model_path, args.target + '.json'), 'r') as stream:
+#             results = json.load(stream)
+# 
+#         target_model_path = Path(model_path, args.target + ".chkpnt")
+#         checkpoint = torch.load(target_model_path, map_location=device)
+#         unmix.load_state_dict(checkpoint['state_dict'])
+#         optimizer.load_state_dict(checkpoint['optimizer'])
+#         scheduler.load_state_dict(checkpoint['scheduler'])
+#         # train for another epochs_trained
+#         t = tqdm.trange(
+#             results['epochs_trained'],
+#             results['epochs_trained'] + args.epochs + 1,
+#             disable=args.quiet
+#         )
+#         train_losses = results['train_loss_history']
+#         valid_losses = results['valid_loss_history']
+#         train_times = results['train_time_history']
+#         best_epoch = results['best_epoch']
+#         es.best = results['best_loss']
+#         es.num_bad_epochs = results['num_bad_epochs']
+#     # else start from 0
+# =============================================================================
 
-        target_model_path = Path(model_path, args.target + ".chkpnt")
-        checkpoint = torch.load(target_model_path, map_location=device)
-        unmix.load_state_dict(checkpoint['state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer'])
-        scheduler.load_state_dict(checkpoint['scheduler'])
-        # train for another epochs_trained
-        t = tqdm.trange(
-            results['epochs_trained'],
-            results['epochs_trained'] + args.epochs + 1,
-            disable=args.quiet
-        )
-        train_losses = results['train_loss_history']
-        valid_losses = results['valid_loss_history']
-        train_times = results['train_time_history']
-        best_epoch = results['best_epoch']
-        es.best = results['best_loss']
-        es.num_bad_epochs = results['num_bad_epochs']
-    # else start from 0
-    else:
-        t = tqdm.trange(1, args.epochs + 1, disable=args.quiet)
-        train_losses = []
-        valid_losses = []
-        train_times = []
-        best_epoch = 0
+    t = tqdm.trange(1, args.epochs + 1, disable=args.quiet)
+    train_losses = []
+    valid_losses = []
+    train_times = []
+    best_epoch = 0
 
     for epoch in t:
         t.set_description("Training Epoch")
@@ -268,7 +294,7 @@ def main():
         plt.xlabel("Iterations")
         plt.ylabel("Loss")
         plt.legend()
-        #plt.show()
+        plt.show()
         #plt.savefig(Path(target_path, "train_plot.pdf"))
         
         plt.figure(figsize=(16,12))
@@ -278,7 +304,7 @@ def main():
         plt.xlabel("Iterations")
         plt.ylabel("Loss")
         plt.legend()
-        #plt.show()
+        plt.show()
         #plt.savefig(Path(target_path, "val_plot.pdf"))
         
         
@@ -320,24 +346,26 @@ def main():
             print("Apply Early Stopping")
             break
     
-    plt.figure(figsize=(16,12))
-    plt.subplot(2, 2, 1)
-    plt.title("Training loss")
-    plt.plot(train_losses,label="Training")
-    plt.xlabel("Iterations")
-    plt.ylabel("Loss")
-    plt.legend()
-    #plt.show()
-    
-    plt.figure(figsize=(16,12))
-    plt.subplot(2, 2, 2)
-    plt.title("Validation loss")
-    plt.plot(valid_losses,label="Validation")
-    plt.xlabel("Iterations")
-    plt.ylabel("Loss")
-    plt.legend()
-    #plt.show()
-    plt.savefig(Path(target_path, "train_val_plot.pdf"))
-
+# =============================================================================
+#     plt.figure(figsize=(16,12))
+#     plt.subplot(2, 2, 1)
+#     plt.title("Training loss")
+#     plt.plot(train_losses,label="Training")
+#     plt.xlabel("Iterations")
+#     plt.ylabel("Loss")
+#     plt.legend()
+#     plt.show()
+#     
+#     plt.figure(figsize=(16,12))
+#     plt.subplot(2, 2, 2)
+#     plt.title("Validation loss")
+#     plt.plot(valid_losses,label="Validation")
+#     plt.xlabel("Iterations")
+#     plt.ylabel("Loss")
+#     plt.legend()
+#     #plt.show()
+#     plt.savefig(Path(target_path, "train_val_plot.pdf"))
+# 
+# =============================================================================
 if __name__ == "__main__":
     main()

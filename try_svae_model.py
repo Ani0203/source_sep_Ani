@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Nov 18 20:50:30 2019
+
+@author: aniruddha
+"""
+
 import torch
 import numpy as np
 import argparse
@@ -263,10 +271,10 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--model',
-        default='umxhq',
+        #default='umxhq',
         type=str,
         #help='path to mode base directory of pretrained models',
-        #default = '../out_unmix/model_new_data_aug'
+        default = '../out_unmix/model_new_data_aug'
     )
 
     parser.add_argument(
