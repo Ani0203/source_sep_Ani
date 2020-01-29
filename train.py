@@ -14,6 +14,7 @@ from git import Repo
 import os
 os.environ["CUDA_VISIBLE_DEVICES"]="1"
 import copy
+import librosa
 
 
 tqdm.monitor_interval = 0
@@ -29,6 +30,14 @@ def train(args, unmix, device, train_sampler, optimizer):
         optimizer.zero_grad()
         Y_hat = unmix(x)
         Y = unmix.transform(y)
+        #Generate log mel spectrograms of output and target output
+        Y_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=22050, mag_spect=Y, device=device)
+        Y_hat_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=22050, mag_spect=Y_hat, device=device)        
+        
+        print(Y_mel_spect.shape, "HERE")
+        print(Y_hat_mel_spect.shape, "HERE")
+        
+        
         loss = torch.nn.functional.mse_loss(Y_hat, Y)
         loss.backward()
         optimizer.step()
@@ -80,13 +89,60 @@ def get_statistics(args, dataset):
     return scaler.mean_, std
 
 
+def spect_to_logmel_spect(n_fft, n_mels, sr, mag_spect, device):
+    '''
+    Function takes magnitude spectrogram input (in the format of torch tensor) and returns
+    log mel spectrogram
+    
+    Parameters:-
+    n_fft--> FFT size
+    n_mels --> Number of bins in mel spectrogram
+    sr --> sampling rate
+    
+    Input:-
+    mag_spect --> Magnitude spectrogram. Shape of input is [time, batch_size, n_channels, fft_bins]
+    '''    
+    in_shape = np.array(mag_spect.shape)
+    out_shape = in_shape
+    out_shape[3] = n_mels
+    Y_hat_mel = torch.zeros(list(out_shape))
+    batch_size = in_shape[1]
+    n_channels = 2
+    
+    #Define filter matrix to convert to mel 
+    filt = librosa.filters.mel(n_fft=n_fft, n_mels = n_mels, sr = sr)
+    filt_torch = torch.from_numpy(filt)
+    filt_torch = filt_torch.to(device)
+    
+    
+    for i in range (batch_size):
+        for j in range (n_channels):
+            temp = mag_spect[:,i,j,:].permute(1,0)
+            temp = temp.to(device)
+            Y_hat_mel[:,i,j,:] = torch.mm(filt_torch, temp.double()).permute(1,0)
+
+    Y_hat_mel=10*torch.log10(1e-10+Y_hat_mel)
+    
+    return(Y_hat_mel)
+        
+        
+    
+    
+
+
+
 def main():
     parser = argparse.ArgumentParser(description='Open Unmix Trainer')
 
     # which target do we want to train?
-    parser.add_argument('--target', type=str, default='vocals',
+# =============================================================================
+#     parser.add_argument('--target', type=str, default='vocals',
+#                         help='target source (will be passed to the dataset)')
+# 
+# =============================================================================
+    parser.add_argument('--target', type=str, default='tabla',
                         help='target source (will be passed to the dataset)')
-
+    
     # Dataset paramaters
     parser.add_argument('--dataset', type=str, default="aligned",
                         choices=[
@@ -95,10 +151,10 @@ def main():
                         ],
                         help='Name of the dataset.')
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_new/')
-    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug2",
+    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug3_tabla",
                         help='provide output path base folder name')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug2')
-    parser.add_argument('--model', type=str, help='Path to checkpoint folder')
+    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug3_tabla')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
     
     
@@ -128,6 +184,9 @@ def main():
                         help='STFT fft size and window size')
     parser.add_argument('--nhop', type=int, default=1024,
                         help='STFT hop size')
+    parser.add_argument('--n-mels', type=int, default=80,
+                        help='Number of bins in mel spectrogram')
+    
     parser.add_argument('--hidden-size', type=int, default=512,
                         help='hidden size parameter of dense bottleneck layers')
     parser.add_argument('--bandwidth', type=int, default=16000,
