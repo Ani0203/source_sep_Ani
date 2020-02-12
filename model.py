@@ -240,3 +240,25 @@ class OpenUnmix(nn.Module):
         x = F.relu(x) * mix
 
         return x
+
+class onsetCNN(nn.Module):
+    def __init__(self):
+        super(onsetCNN, self).__init__()
+        self.conv1 = nn.Conv2d(1, 10, (3,7))
+        self.pool1 = nn.MaxPool2d((3,1))
+        self.conv2 = nn.Conv2d(10, 20, 3)
+        self.pool2 = nn.MaxPool2d((3,1))
+        self.fc1 = nn.Linear(20 * 7 * 8, 256)
+        self.fc2 = nn.Linear(256,1)
+        self.dout = nn.Dropout(p=0.5)
+	
+    def forward(self,x):
+        y=torch.tanh(self.conv1(x))
+        y=self.pool1(y)
+        y=torch.tanh(self.conv2(y))
+        y=self.pool2(y)
+        y=self.dout(y.view(-1,20*7*8))
+        y=self.dout(torch.sigmoid(self.fc1(y)))
+        y=torch.sigmoid(self.fc2(y))
+        return y
+

@@ -263,10 +263,10 @@ if __name__ == '__main__':
 
     parser.add_argument(
         '--model',
-        default='umxhq',
+        #default='umxhq',
         type=str,
         #help='path to mode base directory of pretrained models',
-        #default = '../out_unmix/model_new_data_aug'
+        default = '../out_unmix/model_new_data_aug2_0_300Hz'
     )
 
     parser.add_argument(

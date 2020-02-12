@@ -34,7 +34,7 @@ def train(args, unmix, device, train_sampler, optimizer):
 #         if (args.freq1 & args.freq2):
 # =============================================================================
         loss = torch.nn.functional.mse_loss(Y_hat[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))], Y[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))])
-        print("BW LOSS ACCOUNTED", Y_hat[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))].shape )
+        #print("BW LOSS ACCOUNTED", Y_hat[:,:,:,int((args.freq1/22050)*(args.nfft+2)):int((args.freq2/22050)*(args.nfft+2))].shape )
 # =============================================================================
 #         else:
 # =============================================================================
@@ -113,9 +113,9 @@ def main():
                         ],
                         help='Name of the dataset.')
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_new/')
-    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug2",
+    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug2_100_5000Hz",
                         help='provide output path base folder name')
-    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug2')
+    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug2_100_5000Hz')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
     
@@ -154,9 +154,9 @@ def main():
                         help='set number of channels for model (1, 2)')
     parser.add_argument('--nb-workers', type=int, default=4,
                         help='Number of workers for dataloader.')
-    parser.add_argument('--freq1', type=int, default=0,
+    parser.add_argument('--freq1', type=int, default=100,
                         help='Lower limit of frequency band for training loss')
-    parser.add_argument('--freq2', type=int, default=300,
+    parser.add_argument('--freq2', type=int, default=5000,
                         help='Upper limit of frequency band for training loss')
 
     # Misc Parameters

@@ -20,9 +20,11 @@ import librosa
 tqdm.monitor_interval = 0
 
 
-def train(args, unmix, device, train_sampler, optimizer):
+def train(args, unmix, device, train_sampler, optimizer, detect_onset):
     losses = utils.AverageMeter()
     unmix.train()
+    #detect_onset.eval()
+    
     pbar = tqdm.tqdm(train_sampler, disable=args.quiet) 
     for x, y in pbar:
         pbar.set_description("Training batch")
@@ -34,11 +36,38 @@ def train(args, unmix, device, train_sampler, optimizer):
         Y_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=22050, mag_spect=Y, device=device)
         Y_hat_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=22050, mag_spect=Y_hat, device=device)        
         
-        print(Y_mel_spect.shape, "HERE")
-        print(Y_hat_mel_spect.shape, "HERE")
+        #Average mel spectrograms over stereo channels
+        Y_mel_spect = Y_mel_spect.mean(dim=2)
+        Y_hat_mel_spect = Y_hat_mel_spect.mean(dim=2)
+    
+        #Make chunks of size=duration of spectrograms        
+        Y_mel_spect_chunks = makechunks(Y_mel_spect, duration=15) #make duration also a variable parameter?
+        Y_hat_mel_spect_chunks = makechunks(Y_hat_mel_spect, duration=15) #make duration also a variable parameter?
+        
+        Y_mel_spect_chunks, Y_hat_mel_spect_chunks = Y_mel_spect_chunks.to(device), Y_hat_mel_spect_chunks.to(device)
+        
+        #Feed log mel spectrograms to onset detection 
+        loss_od = torch.zeros([Y_mel_spect_chunks.shape[0]])
+        
+        criterion1 = torch.nn.BCELoss()
+        criterion2 = torch.nn.MSELoss()
+        
+        for x in range(Y_mel_spect_chunks.shape[0]):
+            loss_od[x] = criterion1(detect_onset(Y_mel_spect_chunks[x]), detect_onset(Y_hat_mel_spect_chunks[x]).detach())
+            
+            
+        
+        loss_od = loss_od.to(device)
+        #print("loss_size", loss_od.shape)
+        #loss = (loss/Y_mel_spect_chunks.shape[0]) + torch.nn.functional.mse_loss(Y_hat, Y)  #average bce loss over batch
+        loss = (args.gamma)*(torch.sum(loss_od)/32.0) + (1-args.gamma)*criterion2(Y_hat, Y)
+        print("MSE LOSS", criterion2(Y_hat, Y))
+        print("BCE LOSS", (torch.sum(loss_od)/32.0))
+        print("TOTAL LOSS", loss)
+        
+        #float(Y_mel_spect_chunks.shape[0])
         
         
-        loss = torch.nn.functional.mse_loss(Y_hat, Y)
         loss.backward()
         optimizer.step()
         losses.update(loss.item(), Y.size(1))
@@ -93,6 +122,9 @@ def spect_to_logmel_spect(n_fft, n_mels, sr, mag_spect, device):
     '''
     Function takes magnitude spectrogram input (in the format of torch tensor) and returns
     log mel spectrogram
+    librosa.filters.mel generates conversion matrix, assuming that spectrogram covers range 
+    [0, fs/2]. 
+    
     
     Parameters:-
     n_fft--> FFT size
@@ -103,6 +135,7 @@ def spect_to_logmel_spect(n_fft, n_mels, sr, mag_spect, device):
     mag_spect --> Magnitude spectrogram. Shape of input is [time, batch_size, n_channels, fft_bins]
     '''    
     in_shape = np.array(mag_spect.shape)
+    sp_ht = in_shape[3]
     out_shape = in_shape
     out_shape[3] = n_mels
     Y_hat_mel = torch.zeros(list(out_shape))
@@ -111,7 +144,8 @@ def spect_to_logmel_spect(n_fft, n_mels, sr, mag_spect, device):
     
     #Define filter matrix to convert to mel 
     filt = librosa.filters.mel(n_fft=n_fft, n_mels = n_mels, sr = sr)
-    filt_torch = torch.from_numpy(filt)
+    filt_bl = filt[:,:sp_ht]          #To account for number of bins, if spectrogram is bandlimited
+    filt_torch = torch.from_numpy(filt_bl)
     filt_torch = filt_torch.to(device)
     
     
@@ -124,8 +158,17 @@ def spect_to_logmel_spect(n_fft, n_mels, sr, mag_spect, device):
     Y_hat_mel=10*torch.log10(1e-10+Y_hat_mel)
     
     return(Y_hat_mel)
-        
-        
+
+def makechunks(x,duration):
+    '''
+    Input - Torch tensor of size [time, batch size, height]
+    Output - Torch tensor of size [num_chunks, chunk_duration, batch_size, height]
+    '''
+    y=torch.zeros([x.shape[0]-duration, duration, x.shape[1],x.shape[2]])
+    for i_frame in range(x.shape[1]-duration):
+        y[i_frame] = x[i_frame:i_frame+duration]
+    y = y.permute(2,0,3,1)    
+    return y[:,:,None, :,:]        
     
     
 
@@ -151,12 +194,13 @@ def main():
                         ],
                         help='Name of the dataset.')
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_new/')
-    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug3_tabla",
+    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug_tabla_newloss2",
                         help='provide output path base folder name')
-    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug3_tabla')
+    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug_tabla_newloss2')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
-    
+    parser.add_argument('--onset-model', type=str, help='Path to onset detection model weights' , default="/media/Sharedata/rohit/cnn-onset-det/models/saved_model_0_80mel-0-11025_ch1_22050.pt")
+
     
     # Trainig Parameters
     parser.add_argument('--epochs', type=int, default=1000)
@@ -173,6 +217,8 @@ def main():
                         help='weight decay')
     parser.add_argument('--seed', type=int, default=42, metavar='S',
                         help='random seed (default: 42)')
+    parser.add_argument('--gamma', type=float, default=0.5, 
+                        help='wieghting of different loss components')
 
     # Model Parameters
     parser.add_argument('--seq-dur', type=float, default=6.0,
@@ -218,6 +264,8 @@ def main():
     random.seed(args.seed)
 
     device = torch.device("cuda" if use_cuda else "cpu")
+    torch.autograd.set_detect_anomaly(True)
+
 
     train_dataset, valid_dataset, args = data.load_datasets(parser, args)
     print("TRAIN DATASET", train_dataset)
@@ -256,6 +304,15 @@ def main():
         max_bin=max_bin,
         sample_rate=train_dataset.sample_rate
     ).to(device)
+    
+    #Read trained onset detection network
+    detect_onset = model.onsetCNN().to(device)
+    detect_onset.load_state_dict(torch.load(args.onset_model, map_location='cuda:0'))
+
+    for child in detect_onset.children():
+        for param in child.parameters():
+            param.requires_grad = False
+    
 
     optimizer = torch.optim.Adam(
         unmix.parameters(),
@@ -306,7 +363,7 @@ def main():
     for epoch in t:
         t.set_description("Training Epoch")
         end = time.time()
-        train_loss = train(args, unmix, device, train_sampler, optimizer)
+        train_loss = train(args, unmix, device, train_sampler, optimizer, detect_onset=detect_onset)
         valid_loss = valid(args, unmix, device, valid_sampler)
         scheduler.step(valid_loss)
         train_losses.append(train_loss)
@@ -388,15 +445,16 @@ def main():
     plt.legend()
     #plt.show()
     
-    plt.figure(figsize=(16,12))
-    plt.subplot(2, 2, 2)
-    plt.title("Validation loss")
-    plt.plot(valid_losses,label="Validation")
-    plt.xlabel("Iterations")
-    plt.ylabel("Loss")
-    plt.legend()
+    #plt.figure(figsize=(16,12))
+    #plt.subplot(2, 2, 2)
+    #plt.title("Validation loss")
+    #plt.plot(valid_losses,label="Validation")
+    #plt.xlabel("Iterations")
+    #plt.ylabel("Loss")
+    #plt.legend()
     #plt.show()
-    plt.savefig(Path(target_path, "train_val_plot.pdf"))
+    #plt.savefig(Path(target_path, "train_val_plot.pdf"))
+    plt.savefig(Path(target_path, "train_plot.pdf"))
 
 if __name__ == "__main__":
     main()
