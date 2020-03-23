@@ -92,9 +92,27 @@ def train(args, unmix, device, train_sampler, optimizer, detect_onset):
         
         #print("LOOK HERE 5", detect_onset)
         
+        
         for x in range(Y_mel_spect_chunks.shape[0]):
             loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
-            
+ 
+# =============================================================================
+#        for y in range(Y_mel_spect_chunks.shape[1]):
+#             print("Frame number: ", y)
+#             loss_od = torch.zeros([Y_mel_spect_chunks.shape[0]])
+#             for x in range(Y_mel_spect_chunks.shape[0]):
+#                 loss_od[x] = criterion1(detect_onset((Y_hat_mel_spect_chunks[x][y]).unsqueeze_(0)), detect_onset((Y_mel_spect_chunks[x][y]).unsqueeze_(0)))        
+#             loss_od = loss_od.to(device)
+#             mse_loss = criterion2(Y_hat, Y)
+#             bce_loss = 10*(torch.sum(loss_od)/32.0)
+#             loss = torch.sum(loss_od)/32.0
+#             loss.backward()
+#             optimizer.step()
+#             losses.update(loss.item(), Y.size(1))
+#             mse_losses.update(mse_loss.item(), Y.size(1))
+#             bce_losses.update(bce_loss.item(), Y.size(1))
+#         
+# =============================================================================
 # =============================================================================
 #         plt.figure()
 #         plt.title("Target novelty curve")
@@ -135,10 +153,12 @@ def train(args, unmix, device, train_sampler, optimizer, detect_onset):
         
         
         loss_od = loss_od.to(device)
+        
         #print("loss_size", loss_od.shape)
         #loss = (loss/Y_mel_spect_chunks.shape[0]) + torch.nn.functional.mse_loss(Y_hat, Y)  #average bce loss over batch
+        
         mse_loss = criterion2(Y_hat, Y)
-        bce_loss = 10*(torch.sum(loss_od)/32.0)
+        bce_loss = (torch.sum(loss_od)/32.0)
         
         #print ("MSE LOSS = ", mse_loss)
         #print("BCE_LOSS = ", bce_loss)
@@ -157,6 +177,7 @@ def train(args, unmix, device, train_sampler, optimizer, detect_onset):
         losses.update(loss.item(), Y.size(1))
         mse_losses.update(mse_loss.item(), Y.size(1))
         bce_losses.update(bce_loss.item(), Y.size(1))
+        
     return losses.avg , mse_losses.avg , bce_losses.avg
 
 
@@ -204,7 +225,7 @@ def valid(args, unmix, device, valid_sampler, detect_onset):
             loss_od = loss_od.to(device)
             
             mse_loss = criterion2(Y_hat, Y)
-            bce_loss = 10*(torch.sum(loss_od))
+            bce_loss = (torch.sum(loss_od))
             
             #print ("VALID_MSE LOSS = ", mse_loss)
             #print("VALID_BCE_LOSS = ", bce_loss)
@@ -332,12 +353,12 @@ def main():
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_new/')
     parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug_tabla_bce_finetune_test",
                         help='provide output path base folder name')
-    parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug_tabla_mse_pretrain1')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug_tabla_mse_pretrain1')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default="../out_unmix/model_new_data_aug_tabla_mse_pretrain1" )
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug_tabla_bce_finetune2')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder')
+    parser.add_argument('--model', type=str, help='Path to checkpoint folder')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
-    parser.add_argument('--onset-model', type=str, help='Path to onset detection model weights' , default="/media/Sharedata/rohit/cnn-onset-det/models/saved_model_0_80mel-0-11025_ch2_22050.pt")
+    parser.add_argument('--onset-model', type=str, help='Path to onset detection model weights' , default="/media/Sharedata/rohit/cnn-onset-det/models/saved_model_0_data_pt_80mel-0-11025_1ch_22050_2048_512.pt")
 
     
     # Trainig Parameters
@@ -357,21 +378,29 @@ def main():
                         help='random seed (default: 42)')
     parser.add_argument('--gamma', type=float, default=1.0, 
                         help='weighting of different loss components')
-    parser.add_argument('--finetune', type=bool, default=True, 
-                        help='If true, then optimiser states from checkpoint model are reset (required for bce finetuning), false if aim is to resume training from where it was left off')
+    parser.add_argument('--finetune', type=int, default=0, 
+                        help='If true(1), then optimiser states from checkpoint model are reset (required for bce finetuning), false if aim is to resume training from where it was left off')
     
     
 
     # Model Parameters
-    parser.add_argument('--seq-dur', type=float, default=6.0,
+    parser.add_argument('--seq-dur', type=float, default=3.0,
                         help='Sequence duration in seconds'
                         'value of <=0.0 will use full/variable length')
     parser.add_argument('--unidirectional', action='store_true', default=False,
                         help='Use unidirectional LSTM instead of bidirectional')
-    parser.add_argument('--nfft', type=int, default=4096,
+# =============================================================================
+#     parser.add_argument('--nfft', type=int, default=4096,
+#                         help='STFT fft size and window size')
+#     parser.add_argument('--nhop', type=int, default=1024,
+#                         help='STFT hop size')
+#     
+# =============================================================================
+    parser.add_argument('--nfft', type=int, default=2048,
                         help='STFT fft size and window size')
-    parser.add_argument('--nhop', type=int, default=1024,
+    parser.add_argument('--nhop', type=int, default=512,
                         help='STFT hop size')
+    
     parser.add_argument('--n-mels', type=int, default=80,
                         help='Number of bins in mel spectrogram')
     
@@ -481,7 +510,7 @@ def main():
         checkpoint = torch.load(target_model_path, map_location=device)
         unmix.load_state_dict(checkpoint['state_dict'])
         
-        if (not(args.finetune)):
+        if (args.finetune==0):
             optimizer.load_state_dict(checkpoint['optimizer'])
             scheduler.load_state_dict(checkpoint['scheduler'])
             # train for another epochs_trained
@@ -490,6 +519,7 @@ def main():
                 results['epochs_trained'] + args.epochs + 1,
                 disable=args.quiet
             )
+            print("PICKUP WHERE LEFT OFF", args.finetune)
             train_losses = results['train_loss_history']
             train_mse_losses = results['train_mse_loss_history']
             train_bce_losses = results['train_bce_loss_history']
@@ -507,7 +537,7 @@ def main():
             train_losses = []
             train_mse_losses = []
             train_bce_losses = []
-            
+            print("NOTTTTPICKUP WHERE LEFT OFF", args.finetune)
             valid_losses = []
             valid_mse_losses = []
             valid_bce_losses = []
@@ -560,7 +590,7 @@ def main():
 
         stop = es.step(valid_loss)
         
-        from matplotlib import pyplot as plt 
+        #from matplotlib import pyplot as plt 
         
 # =============================================================================
 #         plt.figure(figsize=(16,12))
@@ -627,26 +657,82 @@ def main():
             print("Apply Early Stopping")
             break
     
-    plt.figure(figsize=(16,12))
-    plt.subplot(2, 2, 1)
+# =============================================================================
+#     plt.figure(figsize=(16,12))
+#     plt.subplot(2, 2, 1)
+#     plt.title("Training loss")
+#     #plt.plot(train_losses,label="Training")
+#     plt.plot(train_losses,label="Training")
+#     plt.xlabel("Iterations")
+#     plt.ylabel("Loss")
+#     plt.legend()
+#     #plt.show()
+#     
+#     plt.figure(figsize=(16,12))
+#     plt.subplot(2, 2, 2)
+#     plt.title("Validation loss")
+#     plt.plot(valid_losses,label="Validation")
+#     plt.xlabel("Iterations")
+#     plt.ylabel("Loss")
+#     plt.legend()
+#     plt.show()
+#     plt.savefig(Path(target_path, "train_val_plot.pdf"))
+#     #plt.savefig(Path(target_path, "train_plot.pdf"))
+# =============================================================================
+    
+    print("TRAINING DONE!!")
+    
+    plt.figure()
     plt.title("Training loss")
-    #plt.plot(train_losses,label="Training")
     plt.plot(train_losses,label="Training")
     plt.xlabel("Iterations")
     plt.ylabel("Loss")
     plt.legend()
-    #plt.show()
+    plt.savefig(Path(target_path, "train_plot.pdf"))
     
-    plt.figure(figsize=(16,12))
-    plt.subplot(2, 2, 2)
+    plt.figure()
     plt.title("Validation loss")
     plt.plot(valid_losses,label="Validation")
     plt.xlabel("Iterations")
     plt.ylabel("Loss")
     plt.legend()
-    plt.show()
-    plt.savefig(Path(target_path, "train_val_plot.pdf"))
-    #plt.savefig(Path(target_path, "train_plot.pdf"))
+    plt.savefig(Path(target_path, "val_plot.pdf"))
+    
+    plt.figure()
+    plt.title("Training BCE loss")
+    plt.plot(train_bce_losses,label="Training")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.savefig(Path(target_path, "train_bce_plot.pdf"))
+    
+    plt.figure()
+    plt.title("Validation BCE loss")
+    plt.plot(valid_bce_losses,label="Validation")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.savefig(Path(target_path, "val_bce_plot.pdf"))
+    
+    plt.figure()
+    plt.title("Training MSE loss")
+    plt.plot(train_mse_losses,label="Training")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.savefig(Path(target_path, "train_mse_plot.pdf"))
+    
+    plt.figure()
+    plt.title("Validation MSE loss")
+    plt.plot(valid_mse_losses,label="Validation")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.savefig(Path(target_path, "val_mse_plot.pdf"))
+    
+    
+    
+    
 
 if __name__ == "__main__":
     main()
