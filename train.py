@@ -92,10 +92,21 @@ def train(args, unmix, device, train_sampler, optimizer, detect_onset):
         
         #print("LOOK HERE 5", detect_onset)
         
+        if (args.binarise==1):
+            #print("Target is Binary!")
+            for x in range(Y_mel_spect_chunks.shape[0]):
+                a = detect_onset(Y_mel_spect_chunks[x])
+                bin_target = (a>args.onset_thresh).float()
+                #print("HIIIIIIII", bin_target)
+                loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), bin_target)
         
-        for x in range(Y_mel_spect_chunks.shape[0]):
-            loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
- 
+        else:    
+            #print("Target is float!")
+            for x in range(Y_mel_spect_chunks.shape[0]):
+                loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
+        
+            
+            
 # =============================================================================
 #        for y in range(Y_mel_spect_chunks.shape[1]):
 #             print("Frame number: ", y)
@@ -219,9 +230,28 @@ def valid(args, unmix, device, valid_sampler, detect_onset):
             criterion2 = torch.nn.MSELoss()
             
             #.detach()
-            for x in range(Y_mel_spect_chunks.shape[0]):
-                loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
-                
+# =============================================================================
+#             for x in range(Y_mel_spect_chunks.shape[0]):
+#                 loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
+# =============================================================================
+            
+            if (args.binarise==1):
+                #print("Target is Binary!!")
+                for x in range(Y_mel_spect_chunks.shape[0]):
+                    a = detect_onset(Y_mel_spect_chunks[x])
+                    bin_target = (a>args.onset_thresh).float()
+                    #print("HIIIIIIII", bin_target)
+                    loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), bin_target)
+            
+            else:    
+                #print("Target is float!")
+                for x in range(Y_mel_spect_chunks.shape[0]):
+                    loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
+            
+            
+            #print("HELLOOO", loss_od)
+            
+            
             loss_od = loss_od.to(device)
             
             mse_loss = criterion2(Y_hat, Y)
@@ -232,7 +262,7 @@ def valid(args, unmix, device, valid_sampler, detect_onset):
 
             #loss = 10*(args.gamma)*(torch.sum(loss_od)) + (1-args.gamma)*criterion2(Y_hat, Y)
             loss = (args.gamma)*(torch.sum(loss_od)) + (1-args.gamma)*criterion2(Y_hat, Y)
-            
+            #loss = (args.gamma)*(torch.sum(loss_od)) #CHANGED!
             #loss = mse_loss
             #print("VALID_TOTAL LOSS = ", loss)
 
@@ -350,20 +380,20 @@ def main():
                             'trackfolder_var', 'trackfolder_fix'
                         ],
                         help='Name of the dataset.')
-    parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_new/')
-    parser.add_argument('--output', type=str, default="../out_unmix/model_new_data_aug_tabla_bce_finetune_test",
+    parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_final/')
+    parser.add_argument('--output', type=str, default="../new_models/model_tabla_mse_pretrain1",
                         help='provide output path base folder name')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug_tabla_mse_pretrain1')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default="../out_unmix/model_new_data_aug_tabla_mse_pretrain1" )
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default="../out_unmix/model_new_data_aug_tabla_mse_pretrain8" )
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug_tabla_bce_finetune2')
     parser.add_argument('--model', type=str, help='Path to checkpoint folder')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
-    parser.add_argument('--onset-model', type=str, help='Path to onset detection model weights' , default="/media/Sharedata/rohit/cnn-onset-det/models/saved_model_0_data_pt_80mel-0-11025_1ch_22050_2048_512.pt")
+    parser.add_argument('--onset-model', type=str, help='Path to onset detection model weights' , default="/media/Sharedata/rohit/cnn-onset-det/models/apr4/saved_model_0_80mel-0-16000_1ch_44100.pt")
 
     
     # Trainig Parameters
     parser.add_argument('--epochs', type=int, default=1000)
-    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--batch-size', type=int, default=16)
     parser.add_argument('--lr', type=float, default=0.001,
                         help='learning rate, defaults to 1e-3')
     parser.add_argument('--patience', type=int, default=140,
@@ -376,30 +406,33 @@ def main():
                         help='weight decay')
     parser.add_argument('--seed', type=int, default=42, metavar='S',
                         help='random seed (default: 42)')
-    parser.add_argument('--gamma', type=float, default=1.0, 
+    parser.add_argument('--gamma', type=float, default=0.0, 
                         help='weighting of different loss components')
     parser.add_argument('--finetune', type=int, default=0, 
                         help='If true(1), then optimiser states from checkpoint model are reset (required for bce finetuning), false if aim is to resume training from where it was left off')
-    
+    parser.add_argument('--onset-thresh', type=float, default=0.3, 
+                        help='Threshold above which onset is said to occur')
+    parser.add_argument('--binarise', type=int, default=0, 
+                        help='If=1(true), then target novelty function is made binary, if=0(false), then left as it is')
     
 
     # Model Parameters
-    parser.add_argument('--seq-dur', type=float, default=3.0,
+    parser.add_argument('--seq-dur', type=float, default=6.0,
                         help='Sequence duration in seconds'
                         'value of <=0.0 will use full/variable length')
     parser.add_argument('--unidirectional', action='store_true', default=False,
                         help='Use unidirectional LSTM instead of bidirectional')
-# =============================================================================
-#     parser.add_argument('--nfft', type=int, default=4096,
-#                         help='STFT fft size and window size')
-#     parser.add_argument('--nhop', type=int, default=1024,
-#                         help='STFT hop size')
-#     
-# =============================================================================
-    parser.add_argument('--nfft', type=int, default=2048,
+    parser.add_argument('--nfft', type=int, default=4096,
                         help='STFT fft size and window size')
-    parser.add_argument('--nhop', type=int, default=512,
+    parser.add_argument('--nhop', type=int, default=1024,
                         help='STFT hop size')
+    
+# =============================================================================
+#     parser.add_argument('--nfft', type=int, default=2048,
+#                         help='STFT fft size and window size')
+#     parser.add_argument('--nhop', type=int, default=512,
+#                         help='STFT hop size')
+# =============================================================================
     
     parser.add_argument('--n-mels', type=int, default=80,
                         help='Number of bins in mel spectrogram')

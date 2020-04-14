@@ -92,7 +92,7 @@ class OpenUnmix(nn.Module):
         input_is_spectrogram=False,
         hidden_size=512,
         nb_channels=2, #changed from stereo to mono
-        sample_rate=22050,  #changed sampling rate
+        sample_rate=44100,  #changed sampling rate
         nb_layers=3,
         input_mean=None,
         input_scale=None,

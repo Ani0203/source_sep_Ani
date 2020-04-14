@@ -238,8 +238,8 @@ class AlignedDataset(torch.utils.data.Dataset):
         output_file='vocals.wav',
         seq_duration=None,
         random_chunks=True,
-        sample_rate=22050 #changed sampling rate
-        #sample_rate=44100
+        #sample_rate=22050 #changed sampling rate
+        sample_rate=44100
     ):
         """A dataset of that assumes multiple track folders
         where each track includes and input and an output file
