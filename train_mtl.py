@@ -1,5 +1,6 @@
 import argparse
 import model
+import model_mtl
 import data
 import torch
 import time
@@ -12,7 +13,7 @@ import numpy as np
 import random
 from git import Repo
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 import copy
 import librosa
 from matplotlib import pyplot as plt
@@ -21,70 +22,45 @@ from matplotlib import pyplot as plt
 tqdm.monitor_interval = 0
 
 
-def train(args, unmix, device, train_sampler, optimizer, detect_onset, detect_onset_training):
+def train(args, unmix, device, train_sampler, optimizer, detect_onset):
     losses = utils.AverageMeter()
     mse_losses = utils.AverageMeter()
     bce_losses = utils.AverageMeter()
     unmix.train()
     detect_onset.eval() #Need onset detection CNN to be working in eval mode
-    if (args.onset_trainable==1):
-        detect_onset_training.train()
-    else:
-        detect_onset_training.eval()
     
     pbar = tqdm.tqdm(train_sampler, disable=args.quiet) 
     for x, y in pbar:
         pbar.set_description("Training batch")
         x, y = x.to(device), y.to(device)
         optimizer.zero_grad()
-        Y_hat = unmix(x)
+        Y_hat, onset_probs  = unmix(x)
+        #print("HELLO!", onset_probs[0].shape)
         Y = unmix.transform(y)
-        
-        #print("LOOK HERE 1", Y.shape, Y_hat.shape)
-        
-        #plot target and out_unmix spectrogram for one example
-        #print("LOOK HERE", Y[:,0,0].shape)
-# =============================================================================
-#         plt.figure(figsize=(20,100))
-#         plt.title("SS network output")
-#         plt.imshow((Y.cpu().numpy()[:,0,0]).T, origin='lower')
-#         plt.show()
-#         
-# =============================================================================
-        
-        
+        #print("LOOK HERE!", onset_probs[0])
+               
         #Generate log mel spectrograms of output and target output
         Y_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=44100, mag_spect=Y, device=device)
-        Y_hat_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=44100, mag_spect=Y_hat, device=device)        
+        #Y_hat_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=44100, mag_spect=Y_hat, device=device)        
         
         #print("LOOK HERE 2", Y_mel_spect.shape, Y_hat_mel_spect.shape)
         
         #Average mel spectrograms over stereo channels
         Y_mel_spect = Y_mel_spect.mean(dim=2)
-        Y_hat_mel_spect = Y_hat_mel_spect.mean(dim=2)
-    
+        #Y_hat_mel_spect = Y_hat_mel_spect.mean(dim=2)
+
+        #Zero-pad
+        Y_mel_spect_pad = zeropad(x=Y_mel_spect, duration=15)
+        
         #print("LOOK HERE 3", Y_mel_spect.shape, Y_hat_mel_spect.shape)
-        
-# =============================================================================
-#         plt.figure(figsize=(5,10))
-#         plt.title("Target Mel spectrogram")
-#         plt.imshow((Y_mel_spect.cpu().numpy()[:,0,:]).T, origin='lower')
-#         plt.show()
-#         
-#         plt.figure(figsize=(5,10))
-#         plt.title("Calculated Mel spectrogram")
-#         k = Y_hat_mel_spect
-#         plt.imshow((k.detach().numpy()[:,0,:]).T, origin='lower')
-#         plt.show()
-# =============================================================================
-        
-    
+           
         #Make chunks of size=duration of spectrograms        
-        Y_mel_spect_chunks = makechunks(Y_mel_spect, duration=15) #make duration also a variable parameter?
-        Y_hat_mel_spect_chunks = makechunks(Y_hat_mel_spect, duration=15) #make duration also a variable parameter?
+        Y_mel_spect_chunks = makechunks(Y_mel_spect_pad, duration=15) #make duration also a variable parameter?
+        #Y_hat_mel_spect_chunks = makechunks(Y_hat_mel_spect, duration=15) #make duration also a variable parameter?
         
-        Y_mel_spect_chunks, Y_hat_mel_spect_chunks = Y_mel_spect_chunks.to(device), Y_hat_mel_spect_chunks.to(device)
-        
+        #Y_mel_spect_chunks, Y_hat_mel_spect_chunks = Y_mel_spect_chunks.to(device), Y_hat_mel_spect_chunks.to(device)
+        Y_mel_spect_chunks = Y_mel_spect_chunks.to(device)
+
         #print("LOOK HERE 4", Y_mel_spect_chunks.shape, Y_hat_mel_spect_chunks.shape)
         
         #Feed log mel spectrograms to onset detection 
@@ -96,37 +72,23 @@ def train(args, unmix, device, train_sampler, optimizer, detect_onset, detect_on
         
         #print("LOOK HERE 5", detect_onset)
         
-        if (args.binarise==1):
-            #print("Target is Binary!")
-            for x in range(Y_mel_spect_chunks.shape[0]):
-                a = detect_onset(Y_mel_spect_chunks[x])
-                bin_target = (a>args.onset_thresh).float()
-                #print("HIIIIIIII", bin_target)
-                loss_od[x] = criterion1(detect_onset_training(Y_hat_mel_spect_chunks[x]), bin_target)
+        # if (args.binarise==1):
+        #     #print("Target is Binary!")
+        #     for x in range(Y_mel_spect_chunks.shape[0]):
+        #         a = detect_onset(Y_mel_spect_chunks[x])
+        #         bin_target = (a>args.onset_thresh).float()
+        #         #print("HIIIIIIII", bin_target)
+        #         loss_od[x] = criterion1(detect_onset_training(Y_hat_mel_spect_chunks[x]), bin_target)
         
-        else:    
+        #else:    
             #print("Target is float!")
-            for x in range(Y_mel_spect_chunks.shape[0]):
-                loss_od[x] = criterion1(detect_onset_training(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
+        for x in range(Y_mel_spect_chunks.shape[0]):
+            loss_od[x] = criterion1(onset_probs[x], detect_onset(Y_mel_spect_chunks[x]))
+            #print("HI", detect_onset(Y_mel_spect_chunks[x]).shape, onset_probs[x].shape)
         
             
             
-# =============================================================================
-#        for y in range(Y_mel_spect_chunks.shape[1]):
-#             print("Frame number: ", y)
-#             loss_od = torch.zeros([Y_mel_spect_chunks.shape[0]])
-#             for x in range(Y_mel_spect_chunks.shape[0]):
-#                 loss_od[x] = criterion1(detect_onset((Y_hat_mel_spect_chunks[x][y]).unsqueeze_(0)), detect_onset((Y_mel_spect_chunks[x][y]).unsqueeze_(0)))        
-#             loss_od = loss_od.to(device)
-#             mse_loss = criterion2(Y_hat, Y)
-#             bce_loss = 10*(torch.sum(loss_od)/32.0)
-#             loss = torch.sum(loss_od)/32.0
-#             loss.backward()
-#             optimizer.step()
-#             losses.update(loss.item(), Y.size(1))
-#             mse_losses.update(mse_loss.item(), Y.size(1))
-#             bce_losses.update(bce_loss.item(), Y.size(1))
-#         
+
 # =============================================================================
 # =============================================================================
 #         plt.figure()
@@ -196,17 +158,16 @@ def train(args, unmix, device, train_sampler, optimizer, detect_onset, detect_on
     return losses.avg , mse_losses.avg , bce_losses.avg
 
 
-def valid(args, unmix, device, valid_sampler, detect_onset, detect_onset_training):
+def valid(args, unmix, device, valid_sampler, detect_onset):
     losses = utils.AverageMeter()
     mse_losses = utils.AverageMeter()
     bce_losses = utils.AverageMeter()
     detect_onset.eval()
     unmix.eval()
-    detect_onset_training.eval()
     with torch.no_grad():
         for x, y in valid_sampler:
             x, y = x.to(device), y.to(device)
-            Y_hat = unmix(x)
+            Y_hat, onset_probs = unmix(x)
             Y = unmix.transform(y)
             
             #print("LOOK HERE!", Y.shape)
@@ -215,18 +176,22 @@ def valid(args, unmix, device, valid_sampler, detect_onset, detect_onset_trainin
             
             #Generate log mel spectrograms of output and target output
             Y_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=44100, mag_spect=Y, device=device)
-            Y_hat_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=44100, mag_spect=Y_hat, device=device)        
+            #Y_hat_mel_spect = spect_to_logmel_spect(n_fft=args.nfft, n_mels=args.n_mels , sr=44100, mag_spect=Y_hat, device=device)        
             
             #Average mel spectrograms over stereo channels
             Y_mel_spect = Y_mel_spect.mean(dim=2)
-            Y_hat_mel_spect = Y_hat_mel_spect.mean(dim=2)
+            #Y_hat_mel_spect = Y_hat_mel_spect.mean(dim=2)
+
+            #Zero-pad
+            Y_mel_spect_pad = zeropad(x=Y_mel_spect, duration=15)
         
             #Make chunks of size=duration of spectrograms        
-            Y_mel_spect_chunks = makechunks(Y_mel_spect, duration=15) #make duration also a variable parameter?
-            Y_hat_mel_spect_chunks = makechunks(Y_hat_mel_spect, duration=15) #make duration also a variable parameter?
+            Y_mel_spect_chunks = makechunks(Y_mel_spect_pad, duration=15) #make duration also a variable parameter?
+            #Y_hat_mel_spect_chunks = makechunks(Y_hat_mel_spect, duration=15) #make duration also a variable parameter?
             
-            Y_mel_spect_chunks, Y_hat_mel_spect_chunks = Y_mel_spect_chunks.to(device), Y_hat_mel_spect_chunks.to(device)
-            
+            #Y_mel_spect_chunks, Y_hat_mel_spect_chunks = Y_mel_spect_chunks.to(device), Y_hat_mel_spect_chunks.to(device)
+            Y_mel_spect_chunks = Y_mel_spect_chunks.to(device)
+
             #Feed log mel spectrograms to onset detection 
             loss_od = torch.zeros([Y_mel_spect_chunks.shape[0]])
             
@@ -240,18 +205,18 @@ def valid(args, unmix, device, valid_sampler, detect_onset, detect_onset_trainin
 #                 loss_od[x] = criterion1(detect_onset(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
 # =============================================================================
             
-            if (args.binarise==1):
-                #print("Target is Binary!!")
-                for x in range(Y_mel_spect_chunks.shape[0]):
-                    a = detect_onset(Y_mel_spect_chunks[x])
-                    bin_target = (a>args.onset_thresh).float()
-                    #print("HIIIIIIII", bin_target)
-                    loss_od[x] = criterion1(detect_onset_training(Y_hat_mel_spect_chunks[x]), bin_target)
+            # if (args.binarise==1):
+            #     #print("Target is Binary!!")
+            #     for x in range(Y_mel_spect_chunks.shape[0]):
+            #         a = detect_onset(Y_mel_spect_chunks[x])
+            #         bin_target = (a>args.onset_thresh).float()
+            #         #print("HIIIIIIII", bin_target)
+            #         loss_od[x] = criterion1(detect_onset_training(Y_hat_mel_spect_chunks[x]), bin_target)
             
-            else:    
-                #print("Target is float!")
-                for x in range(Y_mel_spect_chunks.shape[0]):
-                    loss_od[x] = criterion1(detect_onset_training(Y_hat_mel_spect_chunks[x]), detect_onset(Y_mel_spect_chunks[x]))
+            # else:    
+            #print("Target is float!")
+            for x in range(Y_mel_spect_chunks.shape[0]):
+                loss_od[x] = criterion1(onset_probs[x], detect_onset(Y_mel_spect_chunks[x]))
             
             
             #print("HELLOOO", loss_od)
@@ -356,13 +321,23 @@ def makechunks(x,duration):
     Input - Torch tensor of size [time, batch size, height]
     Output - Torch tensor of size [num_chunks, chunk_duration, batch_size, height]
     '''
-    y=torch.zeros([x.shape[0]-duration, duration, x.shape[1],x.shape[2]])
-    for i_frame in range(x.shape[0]-duration):
+    y=torch.zeros([x.shape[0]-duration+1, duration, x.shape[1],x.shape[2]])
+    for i_frame in range(x.shape[0]-duration+1):
         y[i_frame] = x[i_frame:i_frame+duration]
     y = y.permute(2,0,3,1)    
     return y[:,:,None, :,:]        
-    
-    
+
+def zeropad(x, duration):
+    pad_len = int(duration/2)
+    add = torch.zeros((1, x.shape[1], x.shape[2]))
+    k = x
+    for i in range(pad_len):
+        k = torch.cat((add,k),0)
+        k = torch.cat((k,add),0)
+
+    return k
+
+ 
 
 
 
@@ -386,7 +361,7 @@ def main():
                         ],
                         help='Name of the dataset.')
     parser.add_argument('--root', type=str, help='root path of dataset', default='../rec_data_final/')
-    parser.add_argument('--output', type=str, default="../new_models/model_tabla_mse_pretrain1",
+    parser.add_argument('--output', type=str, default="../new_models/model_tabla_mtl_ourmix_1",
                         help='provide output path base folder name')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../out_unmix/model_new_data_aug_tabla_mse_pretrain1')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default="../out_unmix/model_new_data_aug_tabla_mse_pretrain8" )
@@ -394,6 +369,7 @@ def main():
     parser.add_argument('--model', type=str, help='Path to checkpoint folder')
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
     parser.add_argument('--onset-model', type=str, help='Path to onset detection model weights' , default="/media/Sharedata/rohit/cnn-onset-det/models/apr4/saved_model_0_80mel-0-16000_1ch_44100.pt")
+
 
     
     # Trainig Parameters
@@ -505,7 +481,7 @@ def main():
         train_dataset.sample_rate, args.nfft, args.bandwidth
     )
 
-    unmix = model.OpenUnmix(
+    unmix = model_mtl.OpenUnmix_mtl(
         input_mean=scaler_mean,
         input_scale=scaler_std,
         nb_channels=args.nb_channels,
@@ -516,28 +492,30 @@ def main():
         sample_rate=train_dataset.sample_rate
     ).to(device)
     
-    #Read trained onset detection network (Model through which target spectrogra is passed)
+    #Read trained onset detection network (Model through which target spectrogram is passed)
     detect_onset = model.onsetCNN().to(device)
     detect_onset.load_state_dict(torch.load(args.onset_model, map_location='cuda:0'))
     
     #Model through which separated output is passed
-    detect_onset_training = model.onsetCNN().to(device)
-    detect_onset_training.load_state_dict(torch.load(args.onset_model, map_location='cuda:0'))
+    # detect_onset_training = model.onsetCNN().to(device)
+    # detect_onset_training.load_state_dict(torch.load(args.onset_model, map_location='cuda:0'))
     
     for child in detect_onset.children():
         for param in child.parameters():
             param.requires_grad = False
+
     
-    #If onset trainable is false, then we want to keep the weights of this model fixed
-    if (args.onset_trainable == 0):
-        for child in detect_onset_training.children():
-            for param in child.parameters():
-                param.requires_grad = False
+    
+    #If onset trainable is false, then we want to keep the weights of this moel fixed
+    # if (args.onset_trainable == 0):
+    #     for child in detect_onset_training.children():
+    #         for param in child.parameters():
+    #             param.requires_grad = False
                 
-    #FOR CHECKING, REMOVE LATER           
-    for child in detect_onset_training.children():
-        for param in child.parameters():
-            print(param.requires_grad)
+    # #FOR CHECKING, REMOVE LATER           
+    # for child in detect_onset_training.children():
+    #     for param in child.parameters():
+    #         print(param.requires_grad)
     
     
 
@@ -567,11 +545,11 @@ def main():
         unmix.load_state_dict(checkpoint['state_dict'])
         
         #Only when onse is trainable and when that finetuning is being resumed from a point where it is left off, then read the onset state_dict
-        if ((args.onset_trainable==1)and(args.finetune==0)):
-            detect_onset_training.load_state_dict(checkpoint['onset_state_dict'])
-            print("Reading saved onset model")
-        else:
-            print("Not reading saved onset model")
+        # if ((args.onset_trainable==1)and(args.finetune==0)):
+        #     detect_onset_training.load_state_dict(checkpoint['onset_state_dict'])
+        #     print("Reading saved onset model")
+        # else:
+        #     print("Not reading saved onset model")
         
 
         
@@ -602,7 +580,7 @@ def main():
             train_losses = []
             train_mse_losses = []
             train_bce_losses = []
-            print("NOTTTTPICKUP WHERE LEFT OFF", args.finetune)
+            print("NOT PICKUP WHERE LEFT OFF", args.finetune)
             valid_losses = []
             valid_mse_losses = []
             valid_bce_losses = []
@@ -631,11 +609,11 @@ def main():
     for epoch in t:
         t.set_description("Training Epoch")
         end = time.time()
-        train_loss, train_mse_loss, train_bce_loss = train(args, unmix, device, train_sampler, optimizer, detect_onset=detect_onset, detect_onset_training = detect_onset_training)
+        train_loss, train_mse_loss, train_bce_loss = train(args, unmix, device, train_sampler, optimizer, detect_onset=detect_onset)
         #train_mse_loss = train(args, unmix, device, train_sampler, optimizer, detect_onset=detect_onset)[1]
         #train_bce_loss = train(args, unmix, device, train_sampler, optimizer, detect_onset=detect_onset)[2]
         
-        valid_loss, valid_mse_loss, valid_bce_loss = valid(args, unmix, device, valid_sampler, detect_onset=detect_onset, detect_onset_training = detect_onset_training)
+        valid_loss, valid_mse_loss, valid_bce_loss = valid(args, unmix, device, valid_sampler, detect_onset=detect_onset)
         #valid_mse_loss = valid(args, unmix, device, valid_sampler, detect_onset=detect_onset)[1]
         #valid_bce_loss = valid(args, unmix, device, valid_sampler, detect_onset=detect_onset)[2]
         
@@ -690,7 +668,7 @@ def main():
                 'best_loss': es.best,
                 'optimizer': optimizer.state_dict(),
                 'scheduler': scheduler.state_dict(),
-                'onset_state_dict': detect_onset_training.state_dict()
+                'onset_state_dict': detect_onset.state_dict()
             },
             is_best=valid_loss == es.best,
             path=target_path,
