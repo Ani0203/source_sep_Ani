@@ -132,10 +132,10 @@ def save_checkpoint(
             os.path.join(path, target + '.pth')
         )
         #save weights of onset model as well
-        torch.save(
-            state['onset_state_dict'],
-            os.path.join(path, 'onset_weights.pth')
-                )
+        #torch.save(
+        #    state['onset_state_dict'],
+        #    os.path.join(path, 'onset_weights.pth')
+        #        )
 
 
 class AverageMeter(object):
