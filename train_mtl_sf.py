@@ -13,7 +13,7 @@ import numpy as np
 import random
 from git import Repo
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 import copy
 import librosa
 from matplotlib import pyplot as plt
@@ -27,6 +27,10 @@ def train(args, unmix, device, train_sampler, optimizer):
     mse_losses = utils.AverageMeter()
     bce_losses = utils.AverageMeter()
     bce_sf_losses = utils.AverageMeter()
+    #ADDED
+    precision_values = utils.AverageMeter()
+    recall_values = utils.AverageMeter()
+    f_score_values = utils.AverageMeter()
     unmix.train()
     
     pbar = tqdm.tqdm(train_sampler, disable=args.quiet) 
@@ -49,6 +53,10 @@ def train(args, unmix, device, train_sampler, optimizer):
         #Feed log mel spectrograms to onset detection 
         loss_od = torch.zeros([Y.shape[1]]) #loss of size=batch size
         loss_od_sf = torch.zeros([Y.shape[1]])
+        #ADDED
+        prec = torch.zeros([Y.shape[1]])
+        rec = torch.zeros([Y.shape[1]])
+        f_sc = torch.zeros([Y.shape[1]])
 
         criterion1 = torch.nn.BCELoss()
         criterion2 = torch.nn.MSELoss()
@@ -56,10 +64,16 @@ def train(args, unmix, device, train_sampler, optimizer):
         for x in range(Y.shape[1]):
             #loss_od[x] = criterion1(onset_probs[x], spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
             #loss_od_sf[x] = criterion1(spectral_flux(magStft=Y_hat_avg[:,x], bands=[0, (unmix.sample_rate)/2.0], fs=unmix.sample_rate, device=device), spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
-             
-            loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
-            loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
-                         
+            odf_targ = spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device)
+            odf_pred = spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device)
+            odf_targ_np = odf_targ.detach().cpu().numpy()
+            odf_pred_np = odf_pred.detach().cpu().numpy()
+            #loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+            #loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+            loss_od[x] = criterion1(onset_probs[x], odf_targ)
+            loss_od_sf[x] = criterion1(odf_pred, odf_targ)
+            prec[x], rec[x], f_sc[x] = eval_novelty(odf_targ=odf_targ_np, odf_pred=odf_pred_np)
+            
 # =============================================================================
 # =============================================================================
 #         plt.figure()
@@ -104,18 +118,24 @@ def train(args, unmix, device, train_sampler, optimizer):
         loss_od_sf = loss_od_sf.to(device)
         #print("loss_size", loss_od.shape)
         
+        
+        
         mse_loss = criterion2(Y_hat, Y)
         bce_loss = (torch.sum(loss_od)/Y.shape[1])
         bce_sf_loss = (torch.sum(loss_od_sf)/Y.shape[1])
+        #ADDED
+        precision = (torch.sum(prec)/Y.shape[1])
+        recall = (torch.sum(rec)/Y.shape[1])
+        f_score = (torch.sum(f_sc)/Y.shape[1])
         
         #print ("MSE LOSS = ", mse_loss)
         #print("BCE_LOSS = ", bce_loss)
         #print("BCE SF LOSS = ", bce_sf_loss)
         
         #loss = (args.gamma)*bce_loss + (1-args.gamma)*mse_loss
-
-        loss = ((args.gamma)/(2.0))*bce_loss + (1-args.gamma)*mse_loss + ((args.gamma)/(2.0))*bce_sf_loss
-
+        #loss = (1-args.gamma)*mse_loss
+        #loss = ((args.gamma)/(2.0))*bce_loss + (1-args.gamma)*mse_loss + ((args.gamma)/(2.0))*bce_sf_loss
+        loss = (1-args.gamma)*mse_loss + (args.gamma)*bce_sf_loss
         
         #print("TOTAL LOSS = ", loss)
         
@@ -128,16 +148,26 @@ def train(args, unmix, device, train_sampler, optimizer):
         mse_losses.update(mse_loss.item(), Y.size(1))
         bce_losses.update(bce_loss.item(), Y.size(1))
         bce_sf_losses.update(bce_sf_loss.item(), Y.size(1))
-        
-    return losses.avg , mse_losses.avg , bce_losses.avg, bce_sf_losses.avg
+        #ADDED
+        precision_values.update(float(precision), Y.size(1))
+        recall_values.update(float(recall), Y.size(1))
+        f_score_values.update(float(f_score), Y.size(1))
+        #print("YOOO", type(losses.avg), type(recall_values.avg))
+    return losses.avg , mse_losses.avg , bce_losses.avg, bce_sf_losses.avg, precision_values.avg, recall_values.avg, f_score_values.avg
 
 
-def valid(args, unmix, device, valid_sampler):
+def valid(args, unmix, device, valid_sampler, j, target_path):
     losses = utils.AverageMeter()
     mse_losses = utils.AverageMeter()
     bce_losses = utils.AverageMeter()
     bce_sf_losses = utils.AverageMeter()
+    #ADDED
+    precision_values = utils.AverageMeter()
+    recall_values = utils.AverageMeter()
+    f_score_values = utils.AverageMeter()
     unmix.eval()
+    # Checking
+    i = 0
     with torch.no_grad():
         for x, y in valid_sampler:
             x, y = x.to(device), y.to(device)
@@ -155,15 +185,72 @@ def valid(args, unmix, device, valid_sampler):
             loss_od = torch.zeros([Y.shape[1]]) #loss of size=batch size
             loss_od_sf = torch.zeros([Y.shape[1]])
             
+            #ADDED
+            prec = torch.zeros([Y.shape[1]])
+            rec = torch.zeros([Y.shape[1]])
+            f_sc = torch.zeros([Y.shape[1]])
+            
             criterion1 = torch.nn.BCELoss()
             criterion2 = torch.nn.MSELoss()
             
+            #print("HEYYY", Y.shape, i)
+
             for x in range(Y.shape[1]):
                 #loss_od[x] = criterion1(onset_probs[x], spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
                 #loss_od_sf[x] = criterion1(spectral_flux(magStft=Y_hat_avg[:,x], bands=[0, (unmix.sample_rate)/2.0], fs=unmix.sample_rate, device=device), spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
 
-                loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
-                loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+                #loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+                #loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+                odf_targ = spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device)
+                odf_pred = spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device)
+                odf_targ_np = odf_targ.detach().cpu().numpy()
+                odf_pred_np = odf_pred.detach().cpu().numpy()
+                loss_od[x] = criterion1(onset_probs[x], odf_targ)
+                loss_od_sf[x] = criterion1(odf_pred, odf_targ)
+                prec[x], rec[x], f_sc[x] = eval_novelty(odf_targ=odf_targ_np, odf_pred=odf_pred_np)
+
+                #Check --> Plotting
+                # if ((i==2)and(j%10==0)):
+                #     #Plot target, output novelty curves, target, output spectrograms
+                    
+                #     plt.figure(figsize=(5,20))
+                #     plt.title("Target spectrogram")
+                #     plt.imshow((Y_avg[:,x].cpu().numpy()).T, origin='lower')
+                #     #plt.show()
+                #     filename = "target_spec_"+ str(j) + ".pdf"
+                #     plt.savefig(Path(target_path, filename))
+
+
+                #     plt.figure()
+                #     plt.title("Target Novelty curve")
+                #     plt.plot(odf_targ_np,label="Training")
+                #     #plt.xlabel("Iterations")
+                #     #plt.ylabel("Loss")
+                #     plt.legend()
+                #     #plt.show()
+                #     filename = "target_novelty_"+ str(j) + ".pdf"
+                #     plt.savefig(Path(target_path, filename))
+
+                #     plt.figure(figsize=(5,20))
+                #     plt.title("Predicted spectrogram")
+                #     plt.imshow((Y_hat_avg[:,x].cpu().numpy()).T, origin='lower')
+                #     #plt.show()
+                #     filename = "pred_spec_"+ str(j) + ".pdf"
+                #     plt.savefig(Path(target_path, filename))
+
+                #     plt.figure()
+                #     plt.title("Predicted Novelty curve")
+                #     plt.plot(odf_pred_np,label="Training")
+                #     #plt.xlabel("Iterations")
+                #     #plt.ylabel("Loss")
+                #     plt.legend()
+                #     #plt.show()
+                #     filename = "pred_novelty_"+ str(j) + ".pdf"
+                #     plt.savefig(Path(target_path, filename))
+
+
+
+                    
 
 
 
@@ -173,6 +260,10 @@ def valid(args, unmix, device, valid_sampler):
             mse_loss = criterion2(Y_hat, Y)
             bce_loss = (torch.sum(loss_od)/Y.shape[1])
             bce_sf_loss = (torch.sum(loss_od_sf)/Y.shape[1])
+            #ADDED
+            precision = (torch.sum(prec)/Y.shape[1])
+            recall = (torch.sum(rec)/Y.shape[1])
+            f_score = (torch.sum(f_sc)/Y.shape[1])
             
             #print ("VALID_MSE LOSS = ", mse_loss)
             #print("VALID_BCE_LOSS = ", bce_loss)
@@ -180,15 +271,25 @@ def valid(args, unmix, device, valid_sampler):
             #loss = (args.gamma)*(torch.sum(loss_od)) + (1-args.gamma)*criterion2(Y_hat, Y)
             #loss = (args.gamma)*bce_loss + (1-args.gamma)*mse_loss
             #print("VALID_TOTAL LOSS = ", loss)
-            loss = ((args.gamma)/(2.0))*bce_loss + (1-args.gamma)*mse_loss + ((args.gamma)/(2.0))*bce_sf_loss
-
+            #loss = ((args.gamma)/(2.0))*bce_loss + (1-args.gamma)*mse_loss + ((args.gamma)/(2.0))*bce_sf_loss
+            loss = (1-args.gamma)*mse_loss + (args.gamma)*bce_sf_loss
+        
+            #loss = (1-args.gamma)*mse_loss
             #loss = torch.nn.functional.mse_loss(Y_hat, Y)
             losses.update(loss.item(), Y.size(1))
             mse_losses.update(mse_loss.item(), Y.size(1))
             bce_losses.update(bce_loss.item(), Y.size(1))
             bce_sf_losses.update(bce_sf_loss.item(), Y.size(1))
             
-        return losses.avg , mse_losses.avg, bce_losses.avg , bce_sf_losses.avg
+            #ADDED
+            precision_values.update(float(precision), Y.size(1))
+            recall_values.update(float(recall), Y.size(1))
+            f_score_values.update(float(f_score), Y.size(1))
+
+            #Checking 
+            i = i+1
+            
+        return losses.avg , mse_losses.avg, bce_losses.avg , bce_sf_losses.avg, precision_values.avg, recall_values.avg, f_score_values.avg
 
 
 def get_statistics(args, dataset):
@@ -317,7 +418,8 @@ def spectral_flux_vectorised_torch(magStft, device):
         '''
         magStft --> [num_frames, num_bins], in the torch tensor format
         '''
-        magStft = magStft.reshape(magStft.shape[1], magStft.shape[0])
+        #magStft = magStft.reshape(magStft.shape[1], magStft.shape[0])
+        magStft = magStft.transpose(1,0)
         magStft = 10*torch.log10(1e-10 + magStft)
         diff = magStft[:,1:] - magStft[:,:-1]
         diff=(diff+abs(diff))/2
@@ -331,6 +433,50 @@ def spectral_flux_vectorised_torch(magStft, device):
         specFlux = specFlux/m
         specFlux = specFlux[:,None]
         return specFlux
+
+def peakPicker(data, threshold):
+	peaks=np.array([],dtype='int')
+	for ind in range(1,len(data)-1):
+		if ((data[ind+1] < data[ind] > data[ind-1]) & (data[ind]>threshold)):
+			peaks=np.append(peaks,ind)
+	return peaks
+
+
+def eval_novelty(odf_targ,odf_pred):
+	#pick peaks
+	#input shape at his point should be [255,1]
+	odf_targ_binary=np.zeros(len(odf_targ))
+	odf_targ_binary[peakPicker(odf_targ,0.3)]=1.
+
+	odf_pred_binary=np.zeros(len(odf_pred))
+	odf_pred_binary[peakPicker(odf_pred,0.3)]=1.
+
+	peakLocsOut=np.where(odf_pred_binary==1.0)[0]
+	peakLocsGt=np.where(odf_targ_binary==1.0)[0]
+
+	#evaluate novelty
+	nPositives=len(peakLocsGt)
+	nTP=0
+	tolerance=4
+	for i_peak in range(len(peakLocsOut)):
+		while(len(peakLocsGt) != 0):
+			if abs(peakLocsOut[i_peak] - peakLocsGt[0]) <= int(tolerance/2):
+				peakLocsGt=np.delete(peakLocsGt,0)
+				nTP+=1
+				break
+			elif peakLocsOut[i_peak] < peakLocsGt[0]:
+				break
+			else:
+				peakLocsGt=np.delete(peakLocsGt,0)
+
+	nFP=len(peakLocsOut)-nTP
+
+	precision=nTP/(nTP+nFP)
+	recall=nTP/nPositives
+	f_sc=2*precision*recall/(0.00001+precision+recall)
+	return precision, recall, f_sc
+
+
 
 
 
@@ -354,7 +500,7 @@ def main():
     parser.add_argument('--output', type=str, default="../new_mtl_models/model_tabla_mtl_ourmix_test",
                         help='provide output path base folder name')
     parser.add_argument('--model', type=str, help='Path to checkpoint folder')
-    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='../new_mtl_models/model_tabla_mtl_mse_pretrain4/')
+    #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default="../new_mtl_sf_models/model_tabla_mtl_mse_pretrain1")
     #parser.add_argument('--model', type=str, help='Path to checkpoint folder' , default='umxhq')
     parser.add_argument('--onset-model', type=str, help='Path to onset detection model weights' , default="/media/Sharedata/rohit/cnn-onset-det/models/apr4/saved_model_0_80mel-0-16000_1ch_44100.pt")
 
@@ -377,7 +523,7 @@ def main():
                         help='random seed (default: 42)')
     parser.add_argument('--gamma', type=float, default=0.0, 
                         help='weighting of different loss components')
-    parser.add_argument('--finetune', type=int, default=0, 
+    parser.add_argument('--finetune', type=int, default=1, 
                         help='If true(1), then optimiser states from checkpoint model are reset (required for bce finetuning), false if aim is to resume training from where it was left off')
     parser.add_argument('--onset-thresh', type=float, default=0.3, 
                         help='Threshold above which onset is said to occur')
@@ -523,10 +669,18 @@ def main():
             train_mse_losses = results['train_mse_loss_history']
             train_bce_losses = results['train_bce_loss_history']
             train_bce_sf_losses = results['train_bce_sf_loss_history']
+            train_precision_values = results['train_precision_history']
+            train_recall_values = results['train_recall_history']
+            train_f_score_values = results['train_f_score_history']
+
             valid_losses = results['valid_loss_history']
             valid_mse_losses = results['valid_mse_loss_history']
             valid_bce_losses = results['valid_bce_loss_history']
             valid_bce_sf_losses = results['valid_bce_sf_loss_history']
+            valid_precision_values = results['valid_precision_history']
+            valid_recall_values = results['valid_recall_history']
+            valid_f_score_values = results['valid_f_score_history']
+
             
             train_times = results['train_time_history']
             best_epoch = results['best_epoch']
@@ -540,17 +694,25 @@ def main():
             train_mse_losses = []
             train_bce_losses = []
             train_bce_sf_losses = []
+            #ADDED
+            train_precision_values = []
+            train_recall_values = []
+            train_f_score_values = []            
+            
             print("NOT PICKUP WHERE LEFT OFF", args.finetune)
             valid_losses = []
             valid_mse_losses = []
             valid_bce_losses = []
             valid_bce_sf_losses = []
+            #ADDED
+            valid_precision_values = []
+            valid_recall_values = []
+            valid_f_score_values = []
+            
             
             train_times = []
             best_epoch = 0
 
-        
-        
         #es.best = results['best_loss']
         #es.num_bad_epochs = results['num_bad_epochs']
     # else start from 0
@@ -560,36 +722,58 @@ def main():
         train_mse_losses = []
         train_bce_losses = []
         train_bce_sf_losses = []
+        #ADDED
+        train_precision_values = []
+        train_recall_values = []
+        train_f_score_values = []
         
         valid_losses = []
         valid_mse_losses = []
         valid_bce_losses = []
         valid_bce_sf_losses = []
+        #ADDED
+        valid_precision_values = []
+        valid_recall_values = []
+        valid_f_score_values = []
+        
 
         train_times = []
         best_epoch = 0
 
+        #Testing plotting 
+    j = 0
     for epoch in t:
         t.set_description("Training Epoch")
         end = time.time()
-        train_loss, train_mse_loss, train_bce_loss, train_bce_sf_loss = train(args, unmix, device, train_sampler, optimizer)
+        train_loss, train_mse_loss, train_bce_loss, train_bce_sf_loss, train_precision, train_recall, train_f_score = train(args, unmix, device, train_sampler, optimizer)
         #train_mse_loss = train(args, unmix, device, train_sampler, optimizer, detect_onset=detect_onset)[1]
         #train_bce_loss = train(args, unmix, device, train_sampler, optimizer, detect_onset=detect_onset)[2]
         
-        valid_loss, valid_mse_loss, valid_bce_loss, valid_bce_sf_loss = valid(args, unmix, device, valid_sampler)
+        valid_loss, valid_mse_loss, valid_bce_loss, valid_bce_sf_loss, valid_precision, valid_recall, valid_f_score = valid(args, unmix, device, valid_sampler, j, target_path)
         #valid_mse_loss = valid(args, unmix, device, valid_sampler, detect_onset=detect_onset)[1]
         #valid_bce_loss = valid(args, unmix, device, valid_sampler, detect_onset=detect_onset)[2]
-        
+        j = j+1
+
+
         scheduler.step(valid_loss)
         train_losses.append(train_loss)
         train_mse_losses.append(train_mse_loss)
         train_bce_losses.append(train_bce_loss)
         train_bce_sf_losses.append(train_bce_sf_loss)
+        #ADDED
+        train_precision_values.append(train_precision)
+        train_recall_values.append(train_recall)
+        train_f_score_values.append(train_f_score)
         
         valid_losses.append(valid_loss)
         valid_mse_losses.append(valid_mse_loss)
         valid_bce_losses.append(valid_bce_loss)
         valid_bce_sf_losses.append(valid_bce_sf_loss)
+        
+        #ADDED
+        valid_precision_values.append(valid_precision)
+        valid_recall_values.append(valid_recall)
+        valid_f_score_values.append(valid_f_score)
         
 
         t.set_postfix(
@@ -621,7 +805,65 @@ def main():
 #         plt.show()
 #         #plt.savefig(Path(target_path, "val_plot.pdf"))
 # =============================================================================
-        
+         
+#        plt.figure(figsize=(16,12))
+#        plt.subplot(2, 2, 1)
+#        plt.title("Training precision")
+#        plt.plot(train_precision_values,label="Training")
+#        plt.xlabel("Iterations")
+#        plt.ylabel("Loss")
+#        plt.legend()
+#        plt.show()
+#        #plt.savefig(Path(target_path, "train_plot.pdf"))
+#        
+#        plt.figure(figsize=(16,12))
+#        plt.subplot(2, 2, 1)
+#        plt.title("Training recall")
+#        plt.plot(train_recall_values,label="Training")
+#        plt.xlabel("Iterations")
+#        plt.ylabel("Loss")
+#        plt.legend()
+#        plt.show()
+#        
+#        plt.figure(figsize=(16,12))
+#        plt.subplot(2, 2, 1)
+#        plt.title("Training f_score")
+#        plt.plot(train_f_score_values,label="Training")
+#        plt.xlabel("Iterations")
+#        plt.ylabel("Loss")
+#        plt.legend()
+#        plt.show()
+#        
+#        plt.figure(figsize=(16,12))
+#        plt.subplot(2, 2, 1)
+#        plt.title("Valid precision")
+#        plt.plot(valid_precision_values,label="Validation")
+#        plt.xlabel("Iterations")
+#        plt.ylabel("Loss")
+#        plt.legend()
+#        plt.show()
+#        #plt.savefig(Path(target_path, "train_plot.pdf"))
+#        
+#        plt.figure(figsize=(16,12))
+#        plt.subplot(2, 2, 1)
+#        plt.title("Valid recall")
+#        plt.plot(valid_recall_values,label="Validation")
+#        plt.xlabel("Iterations")
+#        plt.ylabel("Loss")
+#        plt.legend()
+#        plt.show()
+#        
+#        plt.figure(figsize=(16,12))
+#        plt.subplot(2, 2, 1)
+#        plt.title("Valid f_score")
+#        plt.plot(valid_f_score_values,label="Validation")
+#        plt.xlabel("Iterations")
+#        plt.ylabel("Loss")
+#        plt.legend()
+#        plt.show()
+
+
+
         
 
         if valid_loss == es.best:
@@ -651,10 +893,16 @@ def main():
             'train_mse_loss_history': train_mse_losses,
             'train_bce_loss_history': train_bce_losses,
             'train_bce_sf_loss_history': train_bce_sf_losses,
+            'train_precision_history' : train_precision_values,
+            'train_recall_history' : train_recall_values,
+            'train_f_score_history' :train_f_score_values,
             'valid_loss_history': valid_losses,
             'valid_mse_loss_history': valid_mse_losses,
             'valid_bce_loss_history': valid_bce_losses,
             'valid_bce_sf_loss_history': valid_bce_sf_losses,
+            'valid_precision_history' : valid_precision_values,
+            'valid_recall_history' : valid_recall_values,
+            'valid_f_score_history' : valid_f_score_values,
             'train_time_history': train_times,
             'num_bad_epochs': es.num_bad_epochs,
             'commit': commit
@@ -757,6 +1005,70 @@ def main():
     plt.ylabel("Loss")
     plt.legend()
     plt.savefig(Path(target_path, "val_mse_plot.pdf"))
+    
+    
+    
+    plt.figure(figsize=(16,12))
+    plt.subplot(2, 2, 1)
+    plt.title("Training precision")
+    plt.plot(train_precision_values,label="Training")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    #plt.show()
+    plt.savefig(Path(target_path, "train_precision_plot.pdf"))
+    
+    plt.figure(figsize=(16,12))
+    plt.subplot(2, 2, 1)
+    plt.title("Training recall")
+    plt.plot(train_recall_values,label="Training")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    #plt.show()
+    plt.savefig(Path(target_path, "train_recall_plot.pdf"))
+    
+    plt.figure(figsize=(16,12))
+    plt.subplot(2, 2, 1)
+    plt.title("Training f_score")
+    plt.plot(train_f_score_values,label="Training")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    #plt.show()
+    plt.savefig(Path(target_path, "train_f_score_plot.pdf"))
+    
+    plt.figure(figsize=(16,12))
+    plt.subplot(2, 2, 1)
+    plt.title("Valid precision")
+    plt.plot(valid_precision_values,label="Validation")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    #plt.show()
+    plt.savefig(Path(target_path, "valid_precision_plot.pdf"))
+    
+    plt.figure(figsize=(16,12))
+    plt.subplot(2, 2, 1)
+    plt.title("Valid recall")
+    plt.plot(valid_recall_values,label="Validation")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    #plt.show()
+    plt.savefig(Path(target_path, "valid_recall_plot.pdf"))
+    
+    plt.figure(figsize=(16,12))
+    plt.subplot(2, 2, 1)
+    plt.title("Valid f_score")
+    plt.plot(valid_f_score_values,label="Validation")
+    plt.xlabel("Iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    #plt.show()
+    plt.savefig(Path(target_path, "valid_f_score_plot.pdf"))
+
+    
     
     
     
