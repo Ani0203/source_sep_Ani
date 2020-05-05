@@ -15,7 +15,7 @@ import tqdm
 from contextlib import redirect_stderr
 import io
 import os
-os.environ["CUDA_VISIBLE_DEVICES"]="1"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 
 

@@ -23,57 +23,86 @@ tqdm.monitor_interval = 0
 
 
 def train(args, unmix, device, train_sampler, optimizer):
-    losses = utils.AverageMeter()
-    mse_losses = utils.AverageMeter()
-    bce_losses = utils.AverageMeter()
-    bce_sf_losses = utils.AverageMeter()
-    #ADDED
-    precision_values = utils.AverageMeter()
-    recall_values = utils.AverageMeter()
-    f_score_values = utils.AverageMeter()
-    unmix.train()
-    
-    pbar = tqdm.tqdm(train_sampler, disable=args.quiet) 
-    for x, y in pbar:
-        pbar.set_description("Training batch")
-        x, y = x.to(device), y.to(device)
-        optimizer.zero_grad()
-        Y_hat, onset_probs  = unmix(x)
-        Y = unmix.transform(y)
-        #Y.shape==[255,16,2,2049]
+	losses = utils.AverageMeter()
+	mse_losses = utils.AverageMeter()
+	bce_losses = utils.AverageMeter()
+	bce_sf_losses = utils.AverageMeter()
+	#ADDED
+	precision_values = utils.AverageMeter()
+	recall_values = utils.AverageMeter()
+	f_score_values = utils.AverageMeter()
+	unmix.train()
+
+	pbar = tqdm.tqdm(train_sampler, disable=args.quiet) 
+	for x, y in pbar:
+		pbar.set_description("Training batch")
+		x, y = x.to(device), y.to(device)
+		optimizer.zero_grad()
+		Y_hat, onset_probs  = unmix(x)
+		Y = unmix.transform(y)
+		#Y.shape==[255,16,2,2049]
 
 
-        #Average spectrograms over stereo channels for SF onset detection
-        Y_avg = Y.mean(dim=2)
-        Y_hat_avg = Y_hat.mean(dim=2)
+		#Average spectrograms over stereo channels for SF onset detection
+		Y_avg = Y.mean(dim=2)
+		Y_hat_avg = Y_hat.mean(dim=2)
 
-        Y_avg, Y_hat_avg = Y_avg.to(device), Y_hat_avg.to(device)
+		Y_avg, Y_hat_avg = Y_avg.to(device), Y_hat_avg.to(device)
 
-        # Compute SF proability vectors 
-        #Feed log mel spectrograms to onset detection 
-        loss_od = torch.zeros([Y.shape[1]]) #loss of size=batch size
-        loss_od_sf = torch.zeros([Y.shape[1]])
-        #ADDED
-        prec = torch.zeros([Y.shape[1]])
-        rec = torch.zeros([Y.shape[1]])
-        f_sc = torch.zeros([Y.shape[1]])
+		# Compute SF proability vectors 
+		#Feed log mel spectrograms to onset detection 
+		loss_od = torch.zeros([Y.shape[1]]) #loss of size=batch size
+		loss_od_sf = torch.zeros([Y.shape[1]])
+		#ADDED
+		prec = torch.zeros([Y.shape[1]])
+		rec = torch.zeros([Y.shape[1]])
+		f_sc = torch.zeros([Y.shape[1]])
 
-        criterion1 = torch.nn.BCELoss()
-        criterion2 = torch.nn.MSELoss()
-                
-        for x in range(Y.shape[1]):
-            #loss_od[x] = criterion1(onset_probs[x], spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
-            #loss_od_sf[x] = criterion1(spectral_flux(magStft=Y_hat_avg[:,x], bands=[0, (unmix.sample_rate)/2.0], fs=unmix.sample_rate, device=device), spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
-            odf_targ = spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device)
-            odf_pred = spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device)
-            odf_targ_np = odf_targ.detach().cpu().numpy()
-            odf_pred_np = odf_pred.detach().cpu().numpy()
-            #loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
-            #loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
-            loss_od[x] = criterion1(onset_probs[x], odf_targ)
-            loss_od_sf[x] = criterion1(odf_pred, odf_targ)
-            prec[x], rec[x], f_sc[x] = eval_novelty(odf_targ=odf_targ_np, odf_pred=odf_pred_np)
-            
+		criterion1 = torch.nn.BCELoss()
+		criterion2 = torch.nn.MSELoss()
+		if(args.binarise==1):
+			for x in range(Y.shape[1]):
+				odf_targ = spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device)
+				odf_pred = spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device)
+
+				targ_peaks = peakPicker(data=odf_targ,threshold=args.onset_thresh)
+				#pred_peaks = peakPicker(data=odf_pred,threshold=args.onset_thresh)
+
+				targ_weights = torch.ones(odf_targ.shape)
+				for peak in targ_peaks:
+					targ_weights[peak-1] = 0.5
+					targ_weights[peak+1] = 0.5
+				targ_weights = targ_weights.to(device)
+				odf_targ_binary = torch.zeros(odf_targ.shape)
+				odf_targ_binary[targ_peaks] = 1
+				odf_targ_binary = odf_targ_binary.to(device)
+				# odf_pred_binary=torch.zeros(odf_pred.shape)
+				# odf_pred_binary[peakPicker(odf_pred,arsg.onset_thresh)]=1.
+
+
+				odf_targ_np = odf_targ.detach().cpu().numpy()
+				odf_pred_np = odf_pred.detach().cpu().numpy()
+				#loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+				#loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+				criteria_var = torch.nn.BCELoss(weight = targ_weights)
+				loss_od[x] = criteria_var(onset_probs[x], odf_targ_binary)
+				loss_od_sf[x] = criteria_var(odf_pred, odf_targ_binary)
+				prec[x], rec[x], f_sc[x] = eval_novelty(odf_targ=odf_targ_np, odf_pred=odf_pred_np)
+
+		else:
+			for x in range(Y.shape[1]):
+#loss_od[x] = criterion1(onset_probs[x], spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
+#loss_od_sf[x] = criterion1(spectral_flux(magStft=Y_hat_avg[:,x], bands=[0, (unmix.sample_rate)/2.0], fs=unmix.sample_rate, device=device), spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
+				odf_targ = spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device)
+				odf_pred = spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device)
+				odf_targ_np = odf_targ.detach().cpu().numpy()
+				odf_pred_np = odf_pred.detach().cpu().numpy()
+				#loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+				#loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+				loss_od[x] = criterion1(onset_probs[x], odf_targ)
+				loss_od_sf[x] = criterion1(odf_pred, odf_targ)
+				prec[x], rec[x], f_sc[x] = eval_novelty(odf_targ=odf_targ_np, odf_pred=odf_pred_np)
+              				            
 # =============================================================================
 # =============================================================================
 #         plt.figure()
@@ -114,100 +143,139 @@ def train(args, unmix, device, train_sampler, optimizer):
 # =============================================================================
         
         
-        loss_od = loss_od.to(device)
-        loss_od_sf = loss_od_sf.to(device)
-        #print("loss_size", loss_od.shape)
-        
-        
-        
-        mse_loss = criterion2(Y_hat, Y)
-        bce_loss = (torch.sum(loss_od)/Y.shape[1])
-        bce_sf_loss = (torch.sum(loss_od_sf)/Y.shape[1])
-        #ADDED
-        precision = (torch.sum(prec)/Y.shape[1])
-        recall = (torch.sum(rec)/Y.shape[1])
-        f_score = (torch.sum(f_sc)/Y.shape[1])
-        
-        #print ("MSE LOSS = ", mse_loss)
-        #print("BCE_LOSS = ", bce_loss)
-        #print("BCE SF LOSS = ", bce_sf_loss)
-        
-        #loss = (args.gamma)*bce_loss + (1-args.gamma)*mse_loss
-        #loss = (1-args.gamma)*mse_loss
-        #loss = ((args.gamma)/(2.0))*bce_loss + (1-args.gamma)*mse_loss + ((args.gamma)/(2.0))*bce_sf_loss
-        loss = (1-args.gamma)*mse_loss + (args.gamma)*bce_sf_loss
-        
-        #print("TOTAL LOSS = ", loss)
-        
-        #float(Y_mel_spect_chunks.shape[0])
-        
-        
-        loss.backward()
-        optimizer.step()
-        losses.update(loss.item(), Y.size(1))
-        mse_losses.update(mse_loss.item(), Y.size(1))
-        bce_losses.update(bce_loss.item(), Y.size(1))
-        bce_sf_losses.update(bce_sf_loss.item(), Y.size(1))
-        #ADDED
-        precision_values.update(float(precision), Y.size(1))
-        recall_values.update(float(recall), Y.size(1))
-        f_score_values.update(float(f_score), Y.size(1))
+		loss_od = loss_od.to(device)
+		loss_od_sf = loss_od_sf.to(device)
+		#print("loss_size", loss_od.shape)
+
+
+		if(args.mse_rest == 1):
+			mse_loss = criterion2(Y_hat[:,:,:,:740], Y[:,:,:,:740])
+		else:
+			mse_loss = criterion2(Y_hat, Y)
+
+
+
+
+		bce_loss = (torch.sum(loss_od)/Y.shape[1])
+		bce_sf_loss = (torch.sum(loss_od_sf)/Y.shape[1])
+		#ADDED
+		precision = (torch.sum(prec)/Y.shape[1])
+		recall = (torch.sum(rec)/Y.shape[1])
+		f_score = (torch.sum(f_sc)/Y.shape[1])
+
+		#print ("MSE LOSS = ", mse_loss)
+		#print("BCE_LOSS = ", bce_loss)
+		#print("BCE SF LOSS = ", bce_sf_loss)
+
+		loss = (args.gamma)*bce_loss + (1-args.gamma)*mse_loss
+		#loss = (1-args.gamma)*mse_loss
+		#loss = ((args.gamma)/(2.0))*bce_loss + (1-args.gamma)*mse_loss + ((args.gamma)/(2.0))*bce_sf_loss
+		#loss = (1-args.gamma)*mse_loss + (args.gamma)*bce_sf_loss
+
+		#print("TOTAL LOSS = ", loss)
+
+		#float(Y_mel_spect_chunks.shape[0])
+
+
+		loss.backward()
+		optimizer.step()
+		losses.update(loss.item(), Y.size(1))
+		mse_losses.update(mse_loss.item(), Y.size(1))
+		bce_losses.update(bce_loss.item(), Y.size(1))
+		bce_sf_losses.update(bce_sf_loss.item(), Y.size(1))
+		#ADDED
+		precision_values.update(float(precision), Y.size(1))
+		recall_values.update(float(recall), Y.size(1))
+		f_score_values.update(float(f_score), Y.size(1))
         #print("YOOO", type(losses.avg), type(recall_values.avg))
-    return losses.avg , mse_losses.avg , bce_losses.avg, bce_sf_losses.avg, precision_values.avg, recall_values.avg, f_score_values.avg
+	return losses.avg , mse_losses.avg , bce_losses.avg, bce_sf_losses.avg, precision_values.avg, recall_values.avg, f_score_values.avg
 
 
 def valid(args, unmix, device, valid_sampler, j, target_path):
-    losses = utils.AverageMeter()
-    mse_losses = utils.AverageMeter()
-    bce_losses = utils.AverageMeter()
-    bce_sf_losses = utils.AverageMeter()
-    #ADDED
-    precision_values = utils.AverageMeter()
-    recall_values = utils.AverageMeter()
-    f_score_values = utils.AverageMeter()
-    unmix.eval()
-    # Checking
-    i = 0
-    with torch.no_grad():
-        for x, y in valid_sampler:
-            x, y = x.to(device), y.to(device)
-            Y_hat, onset_probs = unmix(x)
-            Y = unmix.transform(y)
-            
-            #Average spectrograms over stereo channels for SF onset detection
-            Y_avg = Y.mean(dim=2)
-            Y_hat_avg = Y_hat.mean(dim=2)
+	losses = utils.AverageMeter()
+	mse_losses = utils.AverageMeter()
+	bce_losses = utils.AverageMeter()
+	bce_sf_losses = utils.AverageMeter()
+	#ADDED
+	precision_values = utils.AverageMeter()
+	recall_values = utils.AverageMeter()
+	f_score_values = utils.AverageMeter()
+	unmix.eval()
+	# Checking
+	i = 0
+	with torch.no_grad():
+		for x, y in valid_sampler:
+			x, y = x.to(device), y.to(device)
+			Y_hat, onset_probs = unmix(x)
+			Y = unmix.transform(y)
 
-            Y_avg, Y_hat_avg = Y_avg.to(device), Y_hat_avg.to(device)
+			#Average spectrograms over stereo channels for SF onset detection
+			Y_avg = Y.mean(dim=2)
+			Y_hat_avg = Y_hat.mean(dim=2)
 
-            # Compute SF proability vectors 
-            #Feed log mel spectrograms to onset detection 
-            loss_od = torch.zeros([Y.shape[1]]) #loss of size=batch size
-            loss_od_sf = torch.zeros([Y.shape[1]])
-            
-            #ADDED
-            prec = torch.zeros([Y.shape[1]])
-            rec = torch.zeros([Y.shape[1]])
-            f_sc = torch.zeros([Y.shape[1]])
-            
-            criterion1 = torch.nn.BCELoss()
-            criterion2 = torch.nn.MSELoss()
-            
-            #print("HEYYY", Y.shape, i)
+			Y_avg, Y_hat_avg = Y_avg.to(device), Y_hat_avg.to(device)
 
-            for x in range(Y.shape[1]):
-                #loss_od[x] = criterion1(onset_probs[x], spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
-                #loss_od_sf[x] = criterion1(spectral_flux(magStft=Y_hat_avg[:,x], bands=[0, (unmix.sample_rate)/2.0], fs=unmix.sample_rate, device=device), spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
+			# Compute SF proability vectors 
+			#Feed log mel spectrograms to onset detection 
+			loss_od = torch.zeros([Y.shape[1]]) #loss of size=batch size
+			loss_od_sf = torch.zeros([Y.shape[1]])
 
-                #loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
-                #loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
-                odf_targ = spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device)
-                odf_pred = spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device)
-                odf_targ_np = odf_targ.detach().cpu().numpy()
-                odf_pred_np = odf_pred.detach().cpu().numpy()
-                loss_od[x] = criterion1(onset_probs[x], odf_targ)
-                loss_od_sf[x] = criterion1(odf_pred, odf_targ)
-                prec[x], rec[x], f_sc[x] = eval_novelty(odf_targ=odf_targ_np, odf_pred=odf_pred_np)
+			#ADDED
+			prec = torch.zeros([Y.shape[1]])
+			rec = torch.zeros([Y.shape[1]])
+			f_sc = torch.zeros([Y.shape[1]])
+
+			criterion1 = torch.nn.BCELoss()
+			criterion2 = torch.nn.MSELoss()
+
+			#print("HEYYY", Y.shape, i)
+
+			if (args.binarise == 1):
+				for x in range(Y.shape[1]):
+					odf_targ = spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device)
+					odf_pred = spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device)
+
+					targ_peaks = peakPicker(data=odf_targ,threshold=args.onset_thresh)
+					#pred_peaks = peakPicker(data=odf_pred,threshold=args.onset_thresh)
+
+					targ_weights = torch.ones(odf_targ.shape)
+					for peak in targ_peaks:
+						targ_weights[peak-1] = 0.5
+						targ_weights[peak+1] = 0.5
+					targ_weights = targ_weights.to(device)
+
+					odf_targ_binary=torch.zeros(odf_targ.shape)
+					odf_targ_binary[targ_peaks]=1.
+					odf_targ_binary = odf_targ_binary.to(device)
+					# odf_pred_binary=torch.zeros(odf_pred.shape)
+					# odf_pred_binary[peakPicker(odf_pred,arsg.onset_thresh)]=1.
+
+
+					odf_targ_np = odf_targ.detach().cpu().numpy()
+					odf_pred_np = odf_pred.detach().cpu().numpy()
+					#loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+					#loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+					criteria_var = torch.nn.BCELoss(weight = targ_weights)
+
+					loss_od[x] = criteria_var(onset_probs[x], odf_targ_binary)
+					loss_od_sf[x] = criteria_var(odf_pred, odf_targ_binary)
+					prec[x], rec[x], f_sc[x] = eval_novelty(odf_targ=odf_targ_np, odf_pred=odf_pred_np)
+
+
+			else:
+				for x in range(Y.shape[1]):
+					#loss_od[x] = criterion1(onset_probs[x], spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
+					#loss_od_sf[x] = criterion1(spectral_flux(magStft=Y_hat_avg[:,x], bands=[0, (unmix.sample_rate)/2.0], fs=unmix.sample_rate, device=device), spectral_flux(magStft=Y_avg[:,x], bands=[0, (unmix.sample_rate)/2.0 ], fs=unmix.sample_rate, device=device))
+
+					#loss_od[x] = criterion1(onset_probs[x], spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+					#loss_od_sf[x] = criterion1(spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device), spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device))
+					odf_targ = spectral_flux_vectorised_torch(magStft=Y_avg[:,x], device=device)
+					odf_pred = spectral_flux_vectorised_torch(magStft=Y_hat_avg[:,x], device=device)
+					odf_targ_np = odf_targ.detach().cpu().numpy()
+					odf_pred_np = odf_pred.detach().cpu().numpy()
+					loss_od[x] = criterion1(onset_probs[x], odf_targ)
+					loss_od_sf[x] = criterion1(odf_pred, odf_targ)
+					prec[x], rec[x], f_sc[x] = eval_novelty(odf_targ=odf_targ_np, odf_pred=odf_pred_np)
 
                 #Check --> Plotting
                 # if ((i==2)and(j%10==0)):
@@ -254,42 +322,47 @@ def valid(args, unmix, device, valid_sampler, j, target_path):
 
 
 
-            loss_od = loss_od.to(device)
-            loss_od_sf = loss_od_sf.to(device)
-            
-            mse_loss = criterion2(Y_hat, Y)
-            bce_loss = (torch.sum(loss_od)/Y.shape[1])
-            bce_sf_loss = (torch.sum(loss_od_sf)/Y.shape[1])
-            #ADDED
-            precision = (torch.sum(prec)/Y.shape[1])
-            recall = (torch.sum(rec)/Y.shape[1])
-            f_score = (torch.sum(f_sc)/Y.shape[1])
-            
-            #print ("VALID_MSE LOSS = ", mse_loss)
-            #print("VALID_BCE_LOSS = ", bce_loss)
+			loss_od = loss_od.to(device)
+			loss_od_sf = loss_od_sf.to(device)
 
-            #loss = (args.gamma)*(torch.sum(loss_od)) + (1-args.gamma)*criterion2(Y_hat, Y)
-            #loss = (args.gamma)*bce_loss + (1-args.gamma)*mse_loss
-            #print("VALID_TOTAL LOSS = ", loss)
-            #loss = ((args.gamma)/(2.0))*bce_loss + (1-args.gamma)*mse_loss + ((args.gamma)/(2.0))*bce_sf_loss
-            loss = (1-args.gamma)*mse_loss + (args.gamma)*bce_sf_loss
-        
-            #loss = (1-args.gamma)*mse_loss
-            #loss = torch.nn.functional.mse_loss(Y_hat, Y)
-            losses.update(loss.item(), Y.size(1))
-            mse_losses.update(mse_loss.item(), Y.size(1))
-            bce_losses.update(bce_loss.item(), Y.size(1))
-            bce_sf_losses.update(bce_sf_loss.item(), Y.size(1))
-            
-            #ADDED
-            precision_values.update(float(precision), Y.size(1))
-            recall_values.update(float(recall), Y.size(1))
-            f_score_values.update(float(f_score), Y.size(1))
+			#mse_loss = criterion2(Y_hat[:,:,:,:1487], Y[:,:,:,:1487])
+			if(args.mse_rest == 1):
+				mse_loss = criterion2(Y_hat[:,:,:,:740], Y[:,:,:,:740])
+			else:
+				mse_loss = criterion2(Y_hat, Y)
 
-            #Checking 
-            i = i+1
+			bce_loss = (torch.sum(loss_od)/Y.shape[1])
+			bce_sf_loss = (torch.sum(loss_od_sf)/Y.shape[1])
+			#ADDED
+			precision = (torch.sum(prec)/Y.shape[1])
+			recall = (torch.sum(rec)/Y.shape[1])
+			f_score = (torch.sum(f_sc)/Y.shape[1])
+
+			#print ("VALID_MSE LOSS = ", mse_loss)
+			#print("VALID_BCE_LOSS = ", bce_loss)
+
+			#loss = (args.gamma)*(torch.sum(loss_od)) + (1-args.gamma)*criterion2(Y_hat, Y)
+			loss = (args.gamma)*bce_loss + (1-args.gamma)*mse_loss
+			#print("VALID_TOTAL LOSS = ", loss)
+			#loss = ((args.gamma)/(2.0))*bce_loss + (1-args.gamma)*mse_loss + ((args.gamma)/(2.0))*bce_sf_loss
+			#loss = (1-args.gamma)*mse_loss + (args.gamma)*bce_sf_loss
+
+			#loss = mse_loss
+			#loss = torch.nn.functional.mse_loss(Y_hat, Y)
+			losses.update(loss.item(), Y.size(1))
+			mse_losses.update(mse_loss.item(), Y.size(1))
+			bce_losses.update(bce_loss.item(), Y.size(1))
+			bce_sf_losses.update(bce_sf_loss.item(), Y.size(1))
+
+			#ADDED
+			precision_values.update(float(precision), Y.size(1))
+			recall_values.update(float(recall), Y.size(1))
+			f_score_values.update(float(f_score), Y.size(1))
+
+			#Checking 
+			i = i+1
             
-        return losses.avg , mse_losses.avg, bce_losses.avg , bce_sf_losses.avg, precision_values.avg, recall_values.avg, f_score_values.avg
+		return losses.avg , mse_losses.avg, bce_losses.avg , bce_sf_losses.avg, precision_values.avg, recall_values.avg, f_score_values.avg
 
 
 def get_statistics(args, dataset):
@@ -471,8 +544,8 @@ def eval_novelty(odf_targ,odf_pred):
 
 	nFP=len(peakLocsOut)-nTP
 
-	precision=nTP/(nTP+nFP)
-	recall=nTP/nPositives
+	precision=nTP/(nTP+nFP+0.00001)
+	recall=nTP/(nPositives+0.00001)
 	f_sc=2*precision*recall/(0.00001+precision+recall)
 	return precision, recall, f_sc
 
@@ -527,10 +600,15 @@ def main():
                         help='If true(1), then optimiser states from checkpoint model are reset (required for bce finetuning), false if aim is to resume training from where it was left off')
     parser.add_argument('--onset-thresh', type=float, default=0.3, 
                         help='Threshold above which onset is said to occur')
-    parser.add_argument('--binarise', type=int, default=0, 
+    parser.add_argument('--binarise', type=int, default=1, 
                         help='If=1(true), then target novelty function is made binary, if=0(false), then left as it is')
     parser.add_argument('--onset-trainable', type=int, default=0,
                         help='If=1(true), then onsetCNN will also get trained in finetuning stage, if=0(false) then kept fixed')
+
+    parser.add_argument('--mtl-conv', type=int, default=0,
+                        help='If=1(true), then onset MTL branch will be Conv+pool+Fc, if=0(false) then fc+fc')
+    parser.add_argument('--mse-rest', type=int, default=0,
+                        help='If=1(true), then MSE loss is restricted, if=0(false) then full mse loss')
     
 
     # Model Parameters
@@ -610,17 +688,37 @@ def main():
         train_dataset.sample_rate, args.nfft, args.bandwidth
     )
 
-    unmix = model_mtl.OpenUnmix_mtl(
-        input_mean=scaler_mean,
-        input_scale=scaler_std,
-        nb_channels=args.nb_channels,
-        hidden_size=args.hidden_size,
-        n_fft=args.nfft,
-        n_hop=args.nhop,
-        max_bin=max_bin,
-        sample_rate=train_dataset.sample_rate
-    ).to(device)
-    
+    if (args.mtl_conv==1):
+        print("Using CONV MTL Late model")
+        unmix = model_mtl.OpenUnmix_mtl_conv_latest(
+            input_mean=scaler_mean,
+            input_scale=scaler_std,
+            nb_channels=args.nb_channels,
+            hidden_size=args.hidden_size,
+            n_fft=args.nfft,
+            n_hop=args.nhop,
+            max_bin=max_bin,
+            sample_rate=train_dataset.sample_rate
+        ).to(device)   
+
+        print(unmix)
+        print("MSE restricted", args.mse_rest)
+
+    else: 
+        print("Using FC MTL model")
+        unmix = model_mtl.OpenUnmix_mtl(
+            input_mean=scaler_mean,
+            input_scale=scaler_std,
+            nb_channels=args.nb_channels,
+            hidden_size=args.hidden_size,
+            n_fft=args.nfft,
+            n_hop=args.nhop,
+            max_bin=max_bin,
+            sample_rate=train_dataset.sample_rate
+        ).to(device)
+        print(unmix)	
+		
+
     #Read trained onset detection network (Model through which target spectrogram is passed)
     # detect_onset = model.onsetCNN().to(device)
     # detect_onset.load_state_dict(torch.load(args.onset_model, map_location='cuda:0'))
